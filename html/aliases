@@ -48,3 +48,6 @@ alias amv="bash ~/scripts/amv https://www.youtube.com/playlist?list=PLPOWv0xMZ4j
 alias update="sudo apt update && sudo apt upgrade"
 alias dif="git diff --stat HEAD..origin/main"
 alias wp-to-zone.ssh.j="bash <(curl -s vps.tihkel.ee/wp-to-zone.ssh.j)"
+alias make-tunnel="pactl load-module module-native-protocol-tcp auth-anonymous=1"
+alias add-tunnel="pactl load-module module-tunnel-sink server=192.168.1.5 sink_name=remote latency_msec=120"
+alias del-tunnel="pactl unload-module $(pactl list short modules | grep module-tunnel-sink | cut -f1)"
