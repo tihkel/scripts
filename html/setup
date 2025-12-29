@@ -1,6 +1,25 @@
 #!/bin/bash
-# === MY ALIASES ===
-# --- SSH CONNECTIONS ---
+
+
+# --- HOSTS SETUP ---
+cat > /etc/hosts << EOF
+127.0.0.1	localhost
+127.0.1.1	$(hostname).lan $(hostname)
+::1		localhost ip6-localhost ip6-loopback
+ff02::1		ip6-allnodes
+ff02::2		ip6-allrouters
+
+# MY HOSTS
+192.168.1.3 t-lap
+192.168.1.4 t-teler
+192.168.1.5 t-k-debian
+192.168.1.7 t-pirukas
+
+EOF
+
+
+# --- MY ALIASES ---
+# SSH CONNECTIONS
 alias sshv="ssh t-v-debian"
 alias sshs='[ "$(hostname -I | awk "{print \$1}")" = "192.168.1.3" ] && ssh tihkel@192.168.1.2 || ssh tihkel@dev.tihkel.ee'
 alias sshu="ssh debian@uvn-72-25.tll01.zonevs.eu"
@@ -51,3 +70,9 @@ alias wp-to-zone.ssh.j="bash <(curl -s vps.tihkel.ee/wp-to-zone.ssh.j)"
 alias make-tunnel="pactl load-module module-native-protocol-tcp auth-anonymous=1"
 alias add-tunnel="pactl load-module module-tunnel-sink server=192.168.1.5 sink_name=remote latency_msec=120"
 alias del-tunnel="pactl unload-module $(pactl list short modules | grep module-tunnel-sink | cut -f1)"
+alias grep="grep --color=auto"
+alias cattt="catt -d t-teler"
+alias anime="~/Documents/ani-cli/ani-cli"
+alias scrcpy="~/Documents/scrcpy/scrcpy"
+alias scrcpyt="adb connect t-teler && ~/Documents/scrcpy/scrcpy"
+alias adbt="adb connect t-teler"
