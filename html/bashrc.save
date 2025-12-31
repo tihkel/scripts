@@ -1,0 +1,229 @@
+#!/bin/bash
+
+
+# COLORS
+BOLD=''
+
+
+# --- NOT INTERACTIVE SHELL ---
+if [[ $- != *i* ]] ; then
+        return
+fi
+
+
+# --- BASH COMPLETION ---
+if ! shopt -oq posix; then
+  if [ -f /usr/share/bash-completion/bash_completion ]; then
+    . /usr/share/bash-completion/bash_completion
+  elif [ -f /etc/bash_completion ]; then
+    . /etc/bash_completion
+  fi
+fi
+
+
+# --- HISTORY FILE CONF ---
+shopt -s histappend
+HISTSIZE=1000
+HISTFILESIZE=2000
+shopt -s checkwinsize
+HISTCONTROL=ignoreboth
+
+
+# --- DIR COLORS ---
+if [ -x /usr/bin/dircolors ]; then
+    eval "$(dircolors -b)"
+    alias ls="ls --color=auto"
+    alias grep="grep --color=auto"
+fi
+
+
+# --- MODT ---
+# FIRMWARE UPDATES
+if [ -f /run/motd.d/85-fwupd ]; then
+        cat /run/motd.d/85-fwupd
+fi
+# LOGIN MSG
+loginMsg="─Hello $(whoami)!─"
+if ! cmp -s <(echo "$loginMsg") /etc/motd; then
+    echo "Updating /etc/motd file..."
+    echo
+    sudo bash -c "echo '$loginMsg' > /etc/motd"
+fi
+
+
+# --- PS1 ---
+MAGENTA='\[\033[01;35m\]'
+PURPLE='\[\033[01;34m\]'
+CYAN='\[\033[01;36m\]'
+GREEN='\[\e[32m\]'
+RED='\[\e[31m\]'
+NC='\[\033[00m\]'
+if [[ $(hostname) == "t-lap" ]]; then
+    export PS1='\[\e]2;\u@\h: \w\a\]'"\
+${MAGENTA}"'\u'"\
+${PURPLE}"'@'"\
+${MAGENTA}"'\h'"\
+${NC}"':'"\
+${PURPLE}"'\w'"\
+${NC}"'\$ '
+elif [[ $(hostname) == "t-k-debian" ]]; then
+    export PS1='\[\e]2;\u@\h: \w\a\]'"\
+${MAGENTA}"'\u'"\
+${CYAN}"'@'"\
+${MAGENTA}"'\h'"\
+${NC}"':'"\
+${CYAN}"'\w'"\
+${NC}"'\$ '
+else
+    export PS1='\[\e]2;\u@\h: \w\a\]'"\
+${GREEN}"'\u'"\
+${GREEN}"'@'"\
+${RED}"'\h'"\
+${NC}"':'"\
+${GREEN}"'\w'"\
+${NC}"'\$ '
+fi
+
+
+# --- HOSTS FILE SETUP ---
+hosts="
+127.0.0.1	localhost
+127.0.1.1	$(hostname).lan $(hostname)
+::1		localhost ip6-localhost ip6-loopback
+ff02::1		ip6-allnodes
+ff02::2		ip6-allrouters
+
+# MY HOSTS
+192.168.1.3 t-lap
+192.168.1.4 t-teler
+192.168.1.5 t-k-debian
+192.168.1.7 t-pirukas
+
+# VPN
+10.182.94.1 t-pirukas.vpn
+10.182.94.5 t-lap.vpn
+10.182.94.6 t-k-debian.vpn
+
+
+# ZONE CUSTOM
+#217.146.69.x
+"
+if ! cmp -s <(echo "$hosts") /etc/hosts; then
+echo "Updating /etc/hosts file..."
+echo
+sudo bash -c "cat > /etc/hosts << 'EOF'
+$hosts
+EOF"
+fi
+
+
+# --- ALIASES ---
+# SSH
+alias sshv="ssh tihkel@t-v-debian"
+alias sshu="ssh debian@vps.tihkel.ee"
+alias ssht="ssh virt135310@tihkel.ee"
+alias sshk="ssh tihkel@t-k-debian"
+
+# SOUND TUNNEL
+if command -v pactl >/dev/null 2>&1; then
+    alias make-tunnel="pactl load-module module-native-protocol-tcp auth-anonymous=1"
+    alias add-tunnel="pactl load-module module-tunnel-sink server=t-k-debian sink_name=remote latency_msec=120"
+    alias del-tunnel="pactl unload-module $(pactl list short modules | grep module-tunnel-sink | cut -f1)"
+fi
+alias micrec="arecord -f cd | nc t-lap.vpn 4444"
+
+# VPS SCRIPTS
+alias ns="bash <(curl -s vps.tihkel.ee/ns) -d"
+alias space="bash <(curl -s vps.tihkel.ee/space)"
+alias disk="bash <(curl -s vps.tihkel.ee/disk)"
+alias inodes="bash <(curl -s vps.tihkel.ee/inodes)"
+alias wp-to-zone.ssh.j="bash <(curl -s vps.tihkel.ee/wp-to-zone.ssh.j)"
+
+# LOCAL SCIPTS
+alias ksk="bash ~/scripts/ksk/ksk"
+alias kak="bash ~/scripts/ksk/kak"
+alias win="bash ~/scripts/win"
+alias anime="~/Documents/ani-cli/ani-cli"
+alias scrcpy="~/Documents/scrcpy/scrcpy"
+alias scrcpyt="adb connect t-teler && ~/Documents/scrcpy/scrcpy"
+alias amv="bash ~/scripts/amv https://www.youtube.com/playlist?list=PLPOWv0xMZ4jDnN7DRxLeJRUkKy9TGbeU-"
+alias splay="bash ~/scripts/max/s-query"
+
+# OTHER
+lst() {
+  local path="."
+  local depth="1"
+
+  for arg in "$@"; do
+    if [[ "$arg" =~ ^[0-9]+$ ]]; then
+      depth="$arg"
+    else
+      path="$arg"
+    fi
+  done
+
+  tree --dirsfirst -L "$depth" "$path"
+}
+hl() {
+    sed "s/$1/\x1b[1;31m&\x1b[0m/g"
+}
+alias whois='whois_func() {
+  command whois "$1" | sed \
+    -e "s/Registrar:/\x1b[35m&\x1b[0m/g" \
+    -e "s/Registrant:/\x1b[35m&\x1b[0m/g" \
+    -e "/status:/s/status:\(.*\)/\x1b[35mstatus:\x1b[36m\1\x1b[0m/" \
+    -e "/Status:/s/Status:\(.*\)/\x1b[35mStatus:\x1b[36m\1\x1b[0m/" \
+    -e "s/Not Disclosed/\x1b[31m&\x1b[0m/g" \
+    -e "/Registrar:/,/^$/s/\(name:\)\(.*\)/\1\x1b[36m\2\x1b[0m/" \
+    -e "/Registrant:/,/^$/s/\(name:\)\(.*\)/\1\x1b[36m\2\x1b[0m/" \
+    -e "/Domain:/,/^$/s/\(name:\)\(.*\)/\1\x1b[35m\2\x1b[0m/" \
+    -e "/^nserver:/s/\(nserver:\)\(.*\)/\1\x1b[36m\2\x1b[0m/" \
+    -e "s/Name servers:/\x1b[35m&\x1b[0m/g" \
+    -e "s/^\(.*\)$/\x1b[32m\1\x1b[0m/" \
+    -e "s/\x1b\[35m.*\x1b\[0m/\x1b[0m&\x1b[0m/" \
+    -e "s/\x1b\[36m.*\x1b\[0m/\x1b[0m&\x1b[0m/" \
+    -e "s/\x1b\[33m.*\x1b\[0m/\x1b[0m&\x1b[0m/" \
+    -e "/Name Server:/s/\(Name Server:\)\(.*\)/\1\x1b[36m\2\x1b[0m/"
+}; whois_func'
+alias src="clear && cd && source ~/.bashrc"
+alias copy="xclip -selection clipboard"
+alias ai="ollama run llama2"
+alias speak="espeak-ng -v en-gb-x-rp"
+alias search="sudo find / 2>/dev/null | grep"
+alias asd="cmatrix -C magenta -u 6"
+alias nc-host="nc -lvnp 4444"
+alias ..="cd .."
+alias cam="cam -c 1 --capture --sdl"
+alias update="sudo apt update && sudo apt upgrade"
+alias dif="git diff --stat HEAD..origin/main"
+alias cattt="catt -d t-teler"
+alias adbt="adb connect t-teler"
+
+# --- NEW SRC ---
+# SETTINGS
+term_width=$(tput cols)
+msg=$(cat << EOF
+ Hello $(whoami)! 
+EOF
+)
+
+# PROCESS EACH LINE
+while IFS= read -r line; do
+    # CALCULATE
+    msg_len=${#line}
+    pad_total=$((term_width - msg_len))
+    (( pad_total < 0 )) && pad_total=0
+    pad_side=$((pad_total / 2))
+    left=$(printf '─%.0s' $(seq 1 "$pad_side"))
+    right="$left"
+
+    # ADD ONE EXTRA CHAR IF ODD
+    if (( (msg_len + 2 * pad_side) < term_width )); then
+        right+="─"
+    fi
+
+    # ECHO
+    echo "${left}${line}${right}"
+done <<< "$msg"
+echo "  Hostname: $(hostname)"
+echo "  IPv4: $(hostname -I | awk '{print $1}')"
