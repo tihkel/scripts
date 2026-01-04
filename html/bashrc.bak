@@ -178,14 +178,7 @@ if command -v pactl >/dev/null 2>&1; then
         fi
     }
     # LOCAL TUNNEL
-    addtl() {
-        modules=$(pactl list short modules | awk '/module-tunnel-sink/ {print $1}')
-        if [[ -n "$modules" ]]; then
-            pactl load-module module-loopback source=remote.monitor sink=alsa_output.pci-0000_00_1f.3.analog-stereo latency_msec=250
-        else
-            echo "Create transmitting tunnel first."
-        fi
-    }
+    alias addtl="if ! [[ -z $(pactl list short modules | awk '/module-tunnel-sink/{print $1}') ]]; then pactl load-module module-loopback source=remote.monitor sink=alsa_output.pci-0000_00_1f.3.analog-stereo latency_msec=250; else echo 'Create transmiting tunnel first.'; fi"
     deltl() {
         ids=$(pactl list short modules | awk '/module-loopback/{print $1}')
         if [ -z "$ids" ]; then
@@ -300,7 +293,7 @@ alias ip="ip -c"
 alias mount-nas="sshfs t-pirukas:/mnt/t-nas ~/t-nas"
 alias dol="dolphin"
 alias tuya="node ~/scripts/tuya-control/remote.js"
-#alias nano="nvim"
+alias nano="vim"
 
 
 # --- NEW SRC ---
@@ -342,5 +335,5 @@ if [[ -n "$vpn_iface" ]]; then
 else
     echo -e "  ${BOLD}VPN:${NC} ${RED}Disabled${NC}"
 fi
-echo -e "  ${BOLD}DNS:${NC} ${PURPLE}$(grep nameserver /etc/resolv.conf | awk '{print $2}' | xargs)${NC}"
+echo -e "  ${BOLD}DNS:${NC} ${PURPLE}$(cat /etc/resolv.conf | grep nameserver | awk '{printf "%s, ", $2}' | sed '$s/, $/\n/')${NC}"
 echo
