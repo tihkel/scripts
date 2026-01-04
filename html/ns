@@ -14,7 +14,7 @@ deep_scan() {
     echo
 
     echo -e "${PURPLE} A ${RESET}"
-    echo -e "${PURPLE}---${BLUE}"
+    echo -e "${PURPLE}───${BLUE}"
     ip=$(dig +short $domain A)
     ptr=$(host $ip | grep -i "pointer" | awk '{print $5}')
     if [ -n "$ip" ]; then
@@ -31,32 +31,37 @@ deep_scan() {
     echo
 
     echo -e "${PURPLE} MX ${RESET}"
-    echo -e "${PURPLE}----${GREEN}"
+    echo -e "${PURPLE}────${GREEN}"
     dig +short $domain MX
     echo
 
     echo -e "${PURPLE} TXT ${RESET}"
-    echo -e "${PURPLE}-----${GREEN}"
+    echo -e "${PURPLE}─────${GREEN}"
     dig +short $domain TXT
     echo
 
     echo -e "${PURPLE} ZONE DKIM ${RESET}"
-    echo -e "${PURPLE}-----------${GREEN}"
+    echo -e "${PURPLE}───────────${GREEN}"
     dig +short TXT zone._domainkey.$domain
     echo
 
+    echo -e "${PURPLE} ELKDATA DKIM ${RESET}"
+    echo -e "${PURPLE}──────────────${GREEN}"
+    dig +short TXT mail-out._domainkey.$domain
+    echo
+
     echo -e "${PURPLE} DMARC ${RESET}"
-    echo -e "${PURPLE}-------${GREEN}"
+    echo -e "${PURPLE}───────${GREEN}"
     dig +short TXT _dmarc.$domain
     echo
 
     echo -e "${PURPLE} NS ${RESET}"
-    echo -e "${PURPLE}----${BLUE}"
+    echo -e "${PURPLE}────${BLUE}"
     dig +short $domain NS
     echo
 
     echo -e "${PURPLE} DNSSEC ${RESET}"
-    echo -e "${PURPLE}--------${GREEN}"
+    echo -e "${PURPLE}────────${GREEN}"
     dig +dnssec @1.1.1.1 $domain A | grep -q "RRSIG"
     if [ $? -eq 0 ]; then
         echo "Active"
@@ -66,7 +71,7 @@ deep_scan() {
     echo
 
     echo -e "${PURPLE} CMS ${RESET}"
-    echo -e "${PURPLE}-----${GREEN}"
+    echo -e "${PURPLE}─────${GREEN}"
 
     check_site() {
         local proto=$1
@@ -126,7 +131,7 @@ deep_scan() {
     echo
 
     echo -e "${PURPLE} SUBDOMAINS ${RESET}"
-    echo -e "${PURPLE}------------${GREEN}"
+    echo -e "${PURPLE}────────────${GREEN}"
 
     curl -s "https://crt.sh/?q=%25.$domain&output=json" | \
     grep -oP '"name_value":"\K[^"]+' | \
@@ -137,7 +142,7 @@ deep_scan() {
     echo
 
     echo -e "${PURPLE} PORTS ${RESET}"
-    echo -e "${PURPLE}-------${GREEN}"
+    echo -e "${PURPLE}───────${GREEN}"
     timeout 10 nmap -sV "$domain" -v | grep -oP '\d+(?=/tcp)'
     echo
 }
