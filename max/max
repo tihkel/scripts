@@ -46,7 +46,7 @@ handle_command() {
     fi
 
     # --- WAKE WORDS ---
-    wake_words="(max|lex|rex|next)"
+    wake_words="(max|lex|rex)"
     if [[ "$cmd" =~ ^$wake_words\ .+ ]]; then
         LISTEN_MODE=1
         LAST_COMMAND_TIME=$(date +%s)
@@ -100,19 +100,27 @@ handle_command() {
             echo -e "${GREEN}[$(date '+%H:%M:%S')] | Stopping...${RESET}" && $speak "okay"
             playerctl stop -p spotify
             ;;
-        *"skip"*|*"skin"*|*"skill"*)
+        *"skip"*|*"skin"*)
             echo -e "${GREEN}[$(date '+%H:%M:%S')] | Skipping...${RESET}" && $speak "okay"
             playerctl next -p spotify
             ;;
         *"volume up"*)
-            echo -e "${GREEN}[$(date '+%H:%M:%S')] | Volume up...${RESET}" && $speak "okay"
-            pactl set-sink-volume @DEFAULT_SINK@ +25%
-            CURRENT_VOLUME=$(pactl get-sink-volume @DEFAULT_SINK@ | awk '{print $5}' | head -n1)
+            echo -e "${GREEN}[$(date '+%H:%M:%S')] | Turning volume up...${RESET}" && $speak "turning volume up"
+            #pactl set-sink-volume @DEFAULT_SINK@ +25%
+            #CURRENT_VOLUME=$(pactl get-sink-volume @DEFAULT_SINK@ | awk '{print $5}' | head -n1)
+            catt -d $TV volumeup
+            pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
+            LISTEN_MODE=0
+            return 0
             ;;
         *"volume down"*)
-            echo -e "${GREEN}[$(date '+%H:%M:%S')] | Volume down...${RESET}" && $speak "okay"
-            pactl set-sink-volume @DEFAULT_SINK@ -25%
-            CURRENT_VOLUME=$(pactl get-sink-volume @DEFAULT_SINK@ | awk '{print $5}' | head -n1)
+            echo -e "${GREEN}[$(date '+%H:%M:%S')] | Turning volume down...${RESET}" && $speak "turning volume down"
+            #pactl set-sink-volume @DEFAULT_SINK@ -25%
+            #CURRENT_VOLUME=$(pactl get-sink-volume @DEFAULT_SINK@ | awk '{print $5}' | head -n1)
+            catt -d $TV volumedown
+            pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
+            LISTEN_MODE=0
+            return 0
             ;;
         *"reset"*)
             echo -e "${GREEN}[$(date '+%H:%M:%S')] | Resetting volume...${RESET}" && $speak "okay"
@@ -238,10 +246,15 @@ echo "Heard: $cmd"
             ;;
         *"calm down"*)
             echo -e "${GREEN}[$(date '+%H:%M:%S')] | Turning off seizure mode...${RESET}" && $speak "okay"
-            kill $(cat /tmp/tuya-beat.pid) && rm /tmp/tuya-beat.pid
+            kill $(cat /tmp/tuya-beat.pid) && rm -rf /tmp/tuya-beat.pid
             ;;
 
         # --- OTHER ---
+        *"kill"*)
+            echo -e "${GREEN}[$(timestamp)] | Killing tmux kiosk...${RESET}" && $speak "killing kiosk"
+            pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
+            tmux kill-server >/dev/null 2>&1
+            ;;
         *"shut down"*|*"shot down"*|*"shut though"*|*"shot though"*)
             echo -e "${GREEN}[$(timestamp)] | Shutting down...${RESET}" && $speak "shutting down"
             node ~/scripts/tuya-control/remote.js bulb-1 off
@@ -279,7 +292,7 @@ echo "Heard: $cmd"
             adb shell input keyevent KEYCODE_WAKEUP
             hyprctl dispatch dpms on HDMI-A-1
             ;;
-        *"project off"*|*"project of"*)
+        *"project off"*|*"project of"*|*"projector off"*|*"projector of"*)
             echo -e "${GREEN}[$(date '+%H:%M:%S')] | Turing off projector...${RESET}" && $speak "okay"
             node ~/scripts/tuya-control/remote.js pluh-2 off
             node ~/scripts/tuya-control/remote.js pluh-2 on
@@ -296,6 +309,7 @@ echo "Heard: $cmd"
             ;;
     esac
 }
+
 
 
 # --- MAIN LOOP ---
