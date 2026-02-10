@@ -609,16 +609,20 @@ elif [ "$c_hostname" = "t-k-debian" ]; then
 else
     colored_hostname="${RED}${c_hostname}${NC}"
 fi
+### HOSTNAME
 echo -e "  ${BOLD}Hostname:${NC} ${PURPLE}$colored_hostname${NC}"
+### LOCAL IPv4
 echo -e "  ${BOLD}Local IPv4:${NC} ${PURPLE}$(hostname -I >/dev/null 2>&1 | awk '{print $1}')${NC}"
+### PUBLIC IPv4
 echo -e "  ${BOLD}Public IPv4:${NC} ${PURPLE}$(IP=$(timeout 0.2 dig +short txt ch whoami.cloudflare @1.1.1.1 2>/dev/null | tr -d '"'); if [ -n "$IP" ]; then echo "$IP"; else curl -s https://icanhazip.com; fi)${NC}"
-vpn_ip=$(hostname -I >/dev/null 2>&1 | tr ' ' '\n' | grep -E '^10\.' | head -n1)
-
+### VPN
+vpn_ip=$(hostname -I | tr ' ' '\n' | grep -E '^10\.' | head -n1)
 if [[ -n "$vpn_ip" ]]; then
     echo -e "  ${BOLD}VPN:${NC} ${PURPLE}${vpn_ip}${NC}"
 else
     echo -e "  ${BOLD}VPN:${NC} ${RED}Disabled${NC}"
 fi
+### DNS NAMESERVERS
 if [ -f /etc/resolv.conf ]; then
     echo -e "  ${BOLD}DNS:${NC} ${PURPLE}$(grep nameserver /etc/resolv.conf | awk '{print $2}' | xargs)${NC}"
 else
