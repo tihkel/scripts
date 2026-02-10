@@ -1,8 +1,9 @@
 #!/bin/bash
 
 
+input="$1"
+domain=${input#http*://}; domain=${domain%%/*}
 # --- USAGE ---
-domain="$1"
 if [ -z "$domain" ]; then
     echo "Usage: $0 <domain>"
     exit 1
@@ -15,145 +16,387 @@ RED="\e[31m"
 GREEN="\e[32m"
 PURPLE="\e[35m"
 BLUE="\e[36m"
+YELLOW="\e[93m"
+GRAY="\e[90m"
+BOLD="\e[1m"
 NC="\e[0m"
 
 
 # --- DOMAIN SCAN ---
-echo -e "DNS: ${PURPLE}$domain${NC}"
+echo -e "${GRAY}Domain: ${PURPLE}$domain${NC}"
 echo
 
-# NS
-echo -e "${PURPLE} NS ${NC}"
-echo -e "${PURPLE}────${BLUE}"
-dig +short $domain NS
-echo
 
-# A
-echo -e "${PURPLE} A ${NC}"
-echo -e "${PURPLE}───${GREEN}"
+# ---DIG DNS ---
+ns_dns=$(dig +short $domain NS)
 ip=$(dig +short "$domain" A)
-#ptr=$(host $ip | grep -i "pointer" | awk '{print $5}')
-ptr=$(host "$(echo "$ip" | head -n 1)" | grep -i "pointer" | awk '{print $5}')
-if [ -n "$ip" ]; then
-    sleep 2
-#    netname=$(whois "$($ip | head -n 1)" 2>/dev/null | awk 'tolower($1) == "netname:" {print $2; exit}' | tr -d '\r')
-    netname=$(whois "$(echo "$ip" | head -n 1)" 2>/dev/null | awk 'tolower($1) == "netname:" {print $2; exit}' | tr -d '\r')
-    if [ -z "$netname" ]; then
-    netname="Location unknown"
-    fi
-else
-    ip="Missing"
-    netname="Location unknown"
-fi
-echo "$ip ($netname) $ptr"
-echo
+mx_dns=$(dig +short $domain MX)
+spf_dns=$(dig +short $domain TXT | grep "v=spf1" | sed 's/" "//g; s/"//g')
+dmarc_dns=$(dig +short _dmarc.$domain TXT)
+txt_dns=$(dig +short $domain TXT | grep -v "v=spf1" | sed 's/" "//g; s/"//g')
 
-# MX
-echo -e "${PURPLE} MX ${NC}"
-echo -e "${PURPLE}────${GREEN}"
-dig +short $domain MX
-echo
-
-# TXT
-echo -e "${PURPLE} TXT ${NC}"
-echo -e "${PURPLE}─────${GREEN}"
-dig +short $domain TXT
-echo
-
-# DKIM
-echo -e "${PURPLE} DKIM ${NC}"
-echo -e "${PURPLE}──────${NC}"
-declare -A DKIM_HOSTS=(
-    ["Zone"]="zone._domainkey"
-    ["veebimajutuse.ee"]="mail-out._domainkey"
-    ["Google"]="google._domainkey"
-)
-for provider in "${!DKIM_HOSTS[@]}"; do
-    selector="${DKIM_HOSTS[$provider]}"
-    result=$(dig +short TXT "${selector}.${domain}")
+# CNAME
+hosts=("k2._domainkey" "k3._domainkey" "web" "blue.smly._domainkey" "green.smly._domainkey" "dev" "vpn" "www" "api" "mail" "blog" "shop")
+cname_found=""
+for host in "${hosts[@]}"; do
+    result=$(dig +short CNAME "${host}.${domain}")
     if [[ -n "$result" ]]; then
-        echo -e "${GREEN}$result${NC}"
+        cname_found+="${GRAY}[${BLUE}${host}.$domain${GRAY}]: ${result}${NC}\n"
     fi
 done
-echo
 
-# DMARC
-echo -e "${PURPLE} DMARC ${NC}"
-echo -e "${PURPLE}───────${GREEN}"
-dig +short TXT _dmarc.$domain
-echo
+# DKIM
+declare -A DKIM_HOSTS=(
+    ["ZONE"]="zone._domainkey"
+    ["ELKDATA_?"]="mail-out._domainkey"
+    ["GOOGLE"]="google._domainkey"
+    ["ZOHO"]="zmail._domainkey"
+    ["selector_1"]="selector1._domainkey"
+    ["selector_2"]="selector2._domainkey"
+    ["ICLOUD"]="icloud._domainkey"
+    ["DIRECTO"]="directo._domainkey"
+    ["MAILCHIMP_1"]="mte1._domainkey"
+    ["MAILCHIMP_2"]="mte2._domainkey"
+    ["EXCELLENT"]="smtp4._domainkey"
+    ["ZENDESK_1"]="zendesk1._domainkey"
+    ["ZENDESK_2"]="zendesk2._domainkey"
+    ["MANDRILL"]="mandrill._domainkey"
+)
+dkim_found=""
+for provider in "${!DKIM_HOSTS[@]}"; do
+    selector="${DKIM_HOSTS[$provider]}"
+    result=$(dig +short TXT "${selector}.${domain}" | sed 's/" "//g; s/"//g')
+    if [[ -n "$result" ]]; then
+        dkim_found+="${GRAY}[${BLUE}${provider}${GRAY}] ${result}${NC}\n"
+    fi
+done
 
-# CMS
-echo -e "${PURPLE} CMS ${NC}"
-echo -e "${PURPLE}─────${GREEN}"
+
+echo -e "${BOLD}${PURPLE}   WEB   ${GRAY}"
+echo -e "${BOLD}${PURPLE}──═━┈━═──${NC}"
+
+
+# --- SITE ---
 check_site() {
     local proto=$1
-    status_code=$(curl -s --max-time 5 -o /dev/null -w "%{http_code}" "$proto://$domain")
-    if [[ "$status_code" =~ ^2|3 ]]; then
+    status_code=$(curl -s -L --max-time 10 -o /dev/null -w "%{http_code}" "$proto://$domain")
+    if [[ "$status_code" =~ ^[234] ]]; then
         echo "$proto"
-    else
-        echo ""
     fi
 }
-protocol=$(check_site http)
-if [ -z "$protocol" ]; then
-    protocol=$(check_site https)
-fi
+protocol=$(check_site https)
+protocol=${protocol:-$(check_site http)}
 
-if [ -z "$protocol" ]; then
-    echo -e "${RED}Site down. Last status: $status_code${NC}"
+## CREATE THE FINAL URL
+get_final_url=$(curl -s -o /dev/null -w "%{http_code} %{url_effective}" -L "http://$domain" | awk '$1 ~ /^(2|3|417)/ {print $2}')
+meta_redirect=$(curl -s "http://$domain" | grep -i '<meta http-equiv="refresh"' | grep -oP 'url=\K[^"]+')
+if [[ -n "$meta_redirect" ]]; then
+    get_final_url="$meta_redirect"
 fi
-headers=$(curl -sI "$protocol://$domain")
-html=$(curl -sL --max-time 5 "$protocol://$domain")
-if echo "$html" | grep -qi "wp-content"; then
-    echo "WordPress"
-elif echo "$html" | grep -qi "Joomla!"; then
-    echo "Joomla"
-elif echo "$html" | grep -qi "Drupal"; then
-    echo "Drupal"
-elif echo "$html" | grep -qi "Shopify"; then
-    echo "Shopify"
-elif echo "$html" | grep -qi "Magento"; then
-    echo "Magento"
-elif echo "$html" | grep -qi "TYPO3"; then
-    echo "TYPO3"
-elif echo "$html" | grep -qi "Squarespace"; then
-    echo "Squarespace"
-elif echo "$html" | grep -qi "Wix.com"; then
-    echo "Wix"
-elif echo "$html" | grep -qi "Ghost"; then
-    echo "Ghost"
+# IF SERVER DOES NOT HAVE HTTP OPEN
+http_off=false
+if [[ -z "$get_final_url" ]]; then
+    http_off=true
+    get_final_url=$(curl -s -o /dev/null -w "%{http_code} %{url_effective}" -L "https://$domain" | awk '$1 ~ /^(2|3|417)/ {print $2}')
+fi
+final_url_rem_slash="${get_final_url%/}"
+final_url="$(
+if [[ "$final_url_rem_slash" == https://* ]]; then
+    echo -e "${BLUE}HTTPS://${final_url_rem_slash#https://}${GRAY}"
 else
-    echo -e "${RED}Unknown${NC}"
-    server=$(echo "$headers" | grep -i "^Server:" | cut -d' ' -f2-)
-    if [ -n "$server" ]; then
-        echo "Web server: $server"
-        if echo "$server" | grep -qi "apache"; then
-            echo -e "${GREEN}Apache${NC}"
-        elif echo "$server" | grep -qi "nginx"; then
-            echo -e "${GREEN}Nginx${NC}"
-        fi
+    echo -e "${RED}HTTP${BLUE}://${final_url_rem_slash#http://}${GRAY}"
+fi
+)"
+declare -A http_codes=(
+  [000]="Site Down"
+  [200]="OK"
+  [301]="Moved Permanently"
+  [308]="Permanent Redirect"
+  [400]="Bad Request"
+  [401]="Unauthorized"
+  [403]="Forbidden"
+  [404]="Not Found"
+  [417]="Expectation Failed"
+  [418]="I’m a teapot"
+  [500]="Internal Server Error"
+  [503]="Service Unavailable"
+)
+site_status_code=$(curl -s -H "Expect:" -o /dev/null -w "%{http_code}" -L "$protocol://$domain")
+#site_status_code=$(curl -s -H "Expect:" -o /dev/null -w "%{http_code}" -L "http://$domain")
+
+site_status=$(
+if [[ "$site_status_code" == "200" ]]; then
+    echo -e "${GREEN}$site_status_code ${GRAY}(${GREEN}${http_codes[$site_status_code]}${GRAY})${GRAY}"
+elif [[ "$site_status_code" == "301" || "$site_status_code" == "308" ]]; then
+    ### SSL CERT PROBBLEM CHECK
+    curl -IL "$final_url_rem_slash" >/dev/null 2>&1
+    curl_exit=$?
+    if [ $curl_exit -eq 60 ]; then
+        failed_status_curl="SSL cert problem"
+    elif [ $curl_exit -ne 0 ]; then
+        failed_status_curl="Connection failed: $curl_exit"
     else
-        echo -e "${RED}May be using CDN or proxy${NC}"
+        failed_status_curl="idk"
+    fi
+    echo -e "${RED}$site_status_code ${GRAY}(${RED}${http_codes[$site_status_code]}${GRAY}) - ${RED}$failed_status_curl${GRAY}"
+else
+    echo -e "${RED}$site_status_code ${RED}$site_status_code ${GRAY}(${RED}${http_codes[$site_status_code]:-Unknown}${GRAY})${GRAY}"
+fi
+)
+
+extra_info=""
+### IF SITE IS UP
+if [ -n "$protocol" ]; then
+    if [ $http_off == true ]; then
+        extra_info+="(${RED}HTTP is turned OFF${GRAY}) "
+    else
+        ### NO REDIRECT TO HTTPS CHECK
+        if [[ "$final_url_rem_slash" == http://* ]]; then
+            extra_info+="(${RED}HTTP${GRAY}) "
+        fi
+    fi
+    ### REDIRECT CHECK
+    if [[ "${final_url_rem_slash#http*://}" == "www.$domain" ]]; then
+        extra_info+="(${YELLOW}REDIRECT${GRAY} to ${BLUE}WWW${GRAY}) "
+    elif [[ "${final_url_rem_slash#http*://}" != "$domain" ]]; then
+        extra_info+="(${YELLOW}REDIRECT${GRAY} to $final_url) "
+    fi
+    ### BLANK PAGE CHECK
+    if [ "$(curl -sL --max-time 10 "$protocol://$domain" | wc -c)" -eq 0 ]; then
+    #if [ -z "$(curl -sL $protocol://$domain)" ]; then
+        extra_info+="(${RED}BLANK PAGE${GRAY}) "
     fi
 fi
+echo -e "${PURPLE} SITE ${GRAY} $extra_info$site_status"
+echo -e "${PURPLE}──────${GRAY}"
+
+## CMS
+if [ -n "$protocol" ]; then
+    headers=$(curl -sI "$protocol://$domain" | tr -d '\000')
+    html=$(curl -sL --max-time 10 "$protocol://$domain" | tr -d '\000')
+    declare -A cms_patterns=(
+        ["WordPress"]="wp-includes"
+        ["Joomla"]="Joomla!"
+        ["Drupal"]="Drupal"
+        ["Shopify"]="Shopify"
+        ["Magento"]="Magento"
+        ["Prestashop"]="prestashop"
+        ["TYPO3"]="TYPO3"
+        ["Squarespace"]="Squarespace"
+        ["Wix"]="Wix.com"
+        ["GoDaddy Website Builder"]="website-builder-data-prod"
+        ["GoDaddy Website Builder"]="Go Daddy Website Builder"
+        ["Google Hosted"]="lh3.googleusercontent.com"
+        ["Ghost"]="Ghost"
+        ["Default Hosting Page"]="construction"
+        ["Default Domain Page"]="Your domain has been registered but"
+        ["Veebimajutus.ee"]="veebimajutus\.ee"
+    )
+    found=false
+    for cms in "${!cms_patterns[@]}"; do
+        if echo "$html" | grep -qi "${cms_patterns[$cms]}"; then
+            echo -e "${GREEN}$cms${GRAY}"
+            found=true
+            break
+        fi
+    done
+#    if [[ "$ip" == "217.146.70.51" ]]; then
+#        echo -e "${GREEN}Zone URL record${GRAY}${NC}"
+#    else
+#    fi
+        if ! $found; then
+            echo -e "${YELLOW}Unknown CMS${GRAY}"
+        fi
+        ## SERVER INFO
+        server=$(echo "$headers" | grep -i "^Server:" | cut -d' ' -f2-)
+        [ -n "$server" ] && echo -e "${GRAY}Server: $server${NC}"
+#    fi
+    echo
+fi
+
+
+# --- NS ---
+echo -e "${PURPLE} NS ${NC}$([ -n "$ns_dns" ] && echo -e ${GREEN}+${GRAY} || echo -e ${RED}-${GRAY})"
+echo -e "${PURPLE}────${BLUE}"
+if [ -n "$ns_dns" ]; then
+    echo  "$ns_dns"
+    echo
+fi
+
+
+# --- A ---
+echo -e "${PURPLE} A ${NC}$([ -n "$ip" ] && echo -e ${GREEN}+${GRAY} || echo -e ${RED}-${GRAY})"
+echo -e "${PURPLE}───${GRAY}"
+if [ -n "$ip" ]; then
+    ptr=$(host "$(echo "$ip" | head -n 1)" | grep -i "pointer" | awk '{print $5}')
+    sleep 1
+    netname=$(whois "$(echo "$ip" | head -n 1)" 2>/dev/null | awk 'tolower($1) == "netname:" {print $2; exit}' | tr -d '\r')
+    if [ -z "$netname" ]; then
+        netname="${YELLOW}unknown"
+    else
+        if [[ "$ip" == "217.146.70.51" ]]; then
+            netname="${GREEN}Zone URL record"
+        fi
+    fi
+    echo -e "$ip (${BLUE}$netname${GRAY}) $ptr"
+    echo
+fi
+
+
 echo
+echo -e "${BOLD}${PURPLE}  EMAIL  ${GRAY}$([ -n "$ns_dns" ] && [ -n "$mx_dns" ] && [ -n "$spf_dns" ] && [ -n "$dkim_found" ] && echo -e "${GREEN}+${NC}" || echo "${RED}-${NC}")"
+echo -e "${BOLD}${PURPLE}──═━┈━═──${NC}"
 
-# SUBDOMAINS
-echo -e "${PURPLE} SUBDOMAINS ${NC}"
-echo -e "${PURPLE}────────────${GREEN}"
 
-curl -s "https://crt.sh/?q=%25.$domain&output=json" | \
-grep -oP '"name_value":"\K[^"]+' | \
-sed 's/\\n/\n/g' | \
-sed 's/\*\.//g' | \
-sort -u | \
-grep "\.$domain$"
+# --- MX ---
+echo -e "${PURPLE} MX ${NC}$([ -n "$mx_dns" ] && echo -e ${GREEN}+${GRAY} || echo -e ${RED}-${GRAY})"
+echo -e "${PURPLE}────${GRAY}"
+if [ -n "$mx_dns" ]; then
+    while read -r PRIORITY HOST; do
+        echo -e "${PRIORITY} ${BLUE}${HOST}${GRAY}"
+    done <<< "$mx_dns"
+    echo
+fi
+
+
+# --- SPF ---
+echo -e "${PURPLE} SPF ${NC}$([ -n "$spf_dns" ] && echo -e ${GREEN}+${GRAY} || echo -e ${RED}-${GRAY})"
+echo -e "${PURPLE}─────${GRAY}"
+if [ -n "$spf_dns" ]; then
+    for word in $spf_dns; do
+        if [[ "$word" == include:* ]]; then
+            prefix="include:"
+            spf_domain="${word#include:}"
+            echo -e "${prefix}${BLUE}${spf_domain}${GRAY} "
+        else
+            echo -e "$word "
+        fi
+    done
+    echo
+fi
+
+
+# --- DKIM ---
+echo -e "${PURPLE} DKIM ${NC}$([ -n "$dkim_found" ] && echo -e "${GREEN}+${NC}" || echo -e "${RED}-${NC}")"
+echo -e "${PURPLE}──────${NC}"
+if [ -n "$dkim_found" ]; then
+    echo -e "$dkim_found"
+fi
+
+
+# --- DMARC ---
+echo -e "${PURPLE} DMARC ${NC}$([ -n "$dmarc_dns" ] && echo -e ${GREEN}+${GRAY} || echo -e ${RED}-${GRAY})"
+echo -e "${PURPLE}───────${GRAY}"
+if [ -n "$dmarc_dns" ]; then
+    echo "$dmarc_dns"
+    echo
+fi
+
+
 echo
+echo -e "${BOLD}${PURPLE}  OTHER  ${GRAY}"
+echo -e "${BOLD}${PURPLE}──═━┈━═──${NC}"
 
-# PORTS
+
+# --- CNAME ---
+echo -e "${PURPLE} CNAME ${NC}$([ -n "$cname_found" ] && echo -e "${GREEN}+${NC}" || echo -e "${RED}-${NC}")"
+echo -e "${PURPLE}───────${NC}"
+if [ -n "$cname_found" ]; then
+    echo -e "$cname_found"
+fi
+
+# --- TXT ---
+echo -e "${PURPLE} TXT ${NC}$([ -n "$txt_dns" ] && echo -e ${GREEN}+${GRAY} || echo -e ${RED}-${GRAY})"
+echo -e "${PURPLE}─────${GRAY}"
+if [ -n "$txt_dns" ]; then
+    echo "$txt_dns"
+    echo
+fi
+
+
+# === START OF -f (FULL SCAN) ===
+if [[ " $@ " =~ " -f " ]]; then
+
+
+# --- SUBDOMAINS ---
+subdomains=$(curl -s "https://crt.sh/?q=%25.$domain&output=json" | \
+    grep -oP '"name_value":"\K[^"]+' | \
+    sed 's/\\n/\n/g' | \
+    sed 's/\*\.//g' | \
+    sort -u | \
+    grep "\.$domain$")
+echo -e "${PURPLE} SUBDOMAINS ${NC}$([ -n "$subdomains" ] && echo -e ${GREEN}+${GRAY} || echo -e ${RED}-${GRAY})"
+echo -e "${PURPLE}────────────${GRAY}"
+if [ -n "$subdomains" ]; then
+    for sub in $subdomains; do
+        sub_http_off=false
+        sub_http_off_info=""
+        # PING CHECK
+        if ping -c1 -W1 "$sub" &>/dev/null; then
+            # GET FINAL URL + STATUS CODE
+            read -r sub_code redirect <<< "$(curl -s -o /dev/null -w "%{http_code} %{url_effective}" -L --max-time 10 "http://$sub")"
+            # IF HTTP OFF - TRY HTTPS
+            if [ "$sub_code" == "000" ]; then
+                sub_http_off=true
+                read -r sub_code redirect <<< "$(curl -s -o /dev/null -w "%{http_code} %{url_effective}" -L --max-time 10 "https://$sub")"
+                redirect=""
+            fi
+            clean_redirect="${redirect%/}"
+            redirect_info=""
+            # STATUS INFO
+            if [ "$sub_code" == "000" ]; then
+                sub_http_off=false
+                sub="${GRAY}$sub${GRAY}"
+                redirect_info=""
+                code_info="(${RED}${sub_code} ${http_codes[$sub_code]}${GRAY})"
+            elif [ "$sub_code" == "200" ]; then
+                code_info="(${GREEN}${sub_code} ${http_codes[$sub_code]}${GRAY})"
+            elif [[ "$sub_code" == "301" || "$sub_code" == "308" ]]; then
+                curl -IL "https://$sub" >/dev/null 2>&1
+                curl_exit=$?
+                if [ $curl_exit -eq 60 ]; then
+                    failed_status_curl="SSL cert problem"
+                elif [ $curl_exit -ne 0 ]; then
+                    failed_status_curl="Connection failed: $curl_exit"
+                else
+                    failed_status_curl=""
+                fi
+                code_info="(${RED}${sub_code} ${http_codes[$sub_code]:-Unknown}${GRAY}) - ${RED}$failed_status_curl${GRAY}"
+            else
+                code_info="(${RED}${sub_code} ${http_codes[$sub_code]:-Unknown}${GRAY})"
+            fi
+            # REDIRECT DETECT
+            if [[ -n "$redirect" && "$clean_redirect" != "http://$sub" && "$clean_redirect" != "https://$sub" ]]; then
+                if [[ "$clean_redirect" == https://* ]]; then
+                    proto="${GRAY}https${GRAY}"
+                else
+                    proto="${RED}HTTP${GRAY}"
+                fi
+                sub="${YELLOW}$sub${GRAY}"
+                target="${clean_redirect#http*://}"
+                redirect_info=" $proto://$target"
+            fi
+        else
+            sub="${GRAY}$sub${GRAY}"
+            redirect_info=" is down (ping failed)"
+            code_info=""
+        fi
+        if [ $sub_http_off == true ];then
+            sub_http_off_info="${GRAY}(${RED}HTTP is turned OFF${GRAY})${GRAY}"
+        fi
+        echo -e "[${GREEN}$sub${GRAY}]$redirect_info $code_info $sub_http_off_info"
+    done
+    echo
+fi
+
+
+# --- PORTS ---
 echo -e "${PURPLE} PORTS ${NC}"
-echo -e "${PURPLE}───────${GREEN}"
-#timeout 10 nmap -sV "$domain" -v | grep -oP '\d+(?=/tcp)'
-echo -e "${RED}[Turned off.]${NC}"
+echo -e "${PURPLE}───────${GRAY}"
+timeout 10 nmap -sV "$domain" -v | grep -oP '\d+(?=/tcp)'
 echo
+
+
+# === END OF -f ===
+exit 1
+fi
