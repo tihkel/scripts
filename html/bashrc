@@ -2,9 +2,6 @@
 
 
 # --- NOT INTERACTIVE SHELL ---
-#if [[ $- != *i* ]] ; then
-#        return
-#fi
 case $- in
     *i*) ;;
     *) return 0 ;;
@@ -26,6 +23,13 @@ GREEN_PS1='\[\e[32m\]'
 RED_PS1='\[\e[31m\]'
 ORANGE_PS1='\[\e[38;5;208m\]'
 NC_PS1='\[\033[00m\]'
+# WHOIS
+PURPLE_WHOIS=$'\e[35m'
+CYAN_WHOIS=$'\e[36m'
+RED_WHOIS=$'\e[31m'
+GREEN_WHOIS=$'\e[32m'
+GRAY_WHOIS="\x1b[90m"
+NC_WHOIS=$'\e[0m'
 
 
 # --- EXIT IF -s ---
@@ -42,6 +46,22 @@ if ! shopt -oq posix; then
     . /etc/bash_completion
   fi
 fi
+
+
+# --- SUDO COMMAND PERMS CHECK ---
+/usr/bin/sudo -n true 2>/dev/null
+SUDO_EXIT=$?
+if [[ $SUDO_EXIT -gt 1 ]]; then
+    sudo() {
+        echo "No sudo permissions."
+#        echo "Would have run: sudo $*" | tr '\n' ' ' | cut -c1-60
+    }
+fi
+
+
+# --- LOCALE ---
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
 
 
 # --- HISTORY FILE CONF ---
@@ -70,14 +90,171 @@ fi
 loginMsg=""
 if ! cmp -s <(echo "$loginMsg") /etc/motd; then
     echo "Updating /etc/motd file..."
-    echo
     sudo bash -c "echo '$loginMsg' > /etc/motd"
+    echo
 fi
 # REMOVE DEFAULT LOGIN MSG
-if ! ls /etc/update-motd.d/ >/dev/null; then
+if ! ls /etc/update-motd.d/ >/dev/null 2>&1; then
     echo "Removing /etc/update-motd.d/ files..."
-    echo
     sudo rm -f /etc/update-motd.d/*
+    echo
+fi
+
+
+# --- REMOVE PACKAGES ---
+## EXIM - mail
+if dpkg -l | grep -q "^ii  exim4"; then
+    echo "Exim4 detected. Removing..."
+    sudo systemctl stop exim4
+    sudo systemctl disable exim4
+    sudo apt purge -y 'exim4*'
+    sudo rm -rf /var/mail/*
+    sudo rm -rf /var/spool/mail/*
+    echo
+fi
+
+
+
+# --- CRONTAB ---
+backup_CJ="0 4 * * * BACKUP_DIR=/home/$USER/backups; MAX_BACKUPS=3; DATE=\$(date +\%F_\%H-\%M-\%S); mkdir -p \"\$BACKUP_DIR\"; tar --exclude=\"$USER/backups\" --exclude=\"$USER/jellyfin/media\" -czf \"\$BACKUP_DIR/\${DATE}_home_dir_backup_for_$USER@\$(hostname).tar.gz\" -C /home $USER >/dev/null; ls -1t \"\$BACKUP_DIR\" | tail -n +\$((MAX_BACKUPS+1)) | xargs -r -I {} rm -- \"\$BACKUP_DIR/{}\""
+
+# CHECK IF CRON EXISTS
+if ! diff -q <(crontab -l 2>/dev/null) <(printf '%s\n' "$backup_CJ") >/dev/null; then
+    echo "Updating home dir backup cronjob..."
+    echo "$backup_CJ" | crontab -
+    echo
+fi
+
+
+# --- NANORC ---
+nanorc="
+set softwrap
+set titlecolor magenta,black
+set tabstospaces
+set tabsize 4
+"
+if [ ! -f ~/.nanorc ] || ! cmp -s <(echo "$nanorc") ~/.nanorc; then
+    echo "Updating ~/.nanorc file..."
+    cat > ~/.nanorc << EOF
+$nanorc
+EOF
+echo
+fi
+
+
+# --- CONF FILES ---
+## BTOP
+BTOP_CONF='
+# Theme file
+color_theme = "/usr/share/btop/themes/HotPurpleTrafficLight.theme"
+# Use theme background instead of terminal background
+theme_background = False
+# Enable 24-bit truecolor
+truecolor = True
+# Force TTY mode (16 colors, TTY symbols)
+force_tty = False
+# Layout presets
+presets = "cpu:1:default,proc:0:default cpu:0:default,mem:0:default,net:0:default cpu:0:block,net:0:tty"
+# Vim-style navigation keys
+vim_keys = False
+# Rounded box corners (ignored in TTY mode)
+rounded_corners = True
+# Default graph symbol type
+graph_symbol = "braille"
+# Per-box graph symbols
+graph_symbol_cpu = "default"
+graph_symbol_gpu = "default"
+graph_symbol_mem = "default"
+graph_symbol_net = "default"
+graph_symbol_proc = "default"
+# Visible boxes
+shown_boxes = "cpu mem net proc"
+# Update interval (ms)
+update_ms = 2000
+# Process list settings
+proc_sorting = "cpu lazy"
+proc_reversed = False
+proc_tree = False
+proc_colors = True
+proc_gradient = True
+proc_per_core = False
+proc_mem_bytes = True
+proc_cpu_graphs = True
+proc_info_smaps = False
+proc_left = False
+proc_filter_kernel = False
+proc_aggregate = False
+# CPU graph stats
+cpu_graph_upper = "total"
+cpu_graph_lower = "total"
+# GPU info in CPU box
+show_gpu_info = "Auto"
+# CPU graph layout
+cpu_invert_lower = True
+cpu_single_graph = False
+cpu_bottom = False
+# CPU info
+show_uptime = True
+check_temp = True
+cpu_sensor = "Auto"
+show_coretemp = True
+cpu_core_map = ""
+temp_scale = "celsius"
+show_cpu_freq = True
+# Size units
+base_10_sizes = True
+# Clock format (strftime)
+clock_format = "%X"
+# Background UI updates
+background_update = False
+# Custom CPU name
+custom_cpu_name = ""
+# Disk filtering
+disks_filter = ""
+# Memory and disks
+mem_graphs = True
+mem_below_net = False
+zfs_arc_cached = True
+show_swap = True
+swap_disk = True
+show_disks = True
+only_physical = True
+use_fstab = True
+zfs_hide_datasets = False
+disk_free_priv = False
+show_io_stat = True
+io_mode = False
+io_graph_combined = False
+io_graph_speeds = ""
+# Network
+net_download = 1000
+net_upload = 1000
+net_auto = True
+net_sync = True
+net_iface = ""
+# Battery
+show_battery = True
+selected_battery = "Auto"
+show_battery_watts = True
+# Logging
+log_level = "WARNING"
+# GPU / NVIDIA
+nvml_measure_pcie_speeds = True
+gpu_mirror_graph = True
+# Custom GPU names
+custom_gpu_name0 = ""
+custom_gpu_name1 = ""
+custom_gpu_name2 = ""
+custom_gpu_name3 = ""
+custom_gpu_name4 = ""
+custom_gpu_name5 = ""
+'
+if ! [ -f ~/.config/btop/btop.conf ] || ! cmp -s <(echo "$BTOP_CONF") ~/.config/btop/btop.conf; then
+    echo "Updating ~/.config/btop/btop.conf file..."
+    mkdir -p ~/.config/ ~/.config/btop/
+    touch ~/.config/btop/btop.conf
+    echo "$BTOP_CONF" > ~/.config/btop/btop.conf
+    echo
 fi
 
 
@@ -146,10 +323,10 @@ ff02::2		ip6-allrouters
 "
 if ! cmp -s <(echo "$hosts") /etc/hosts; then
     echo "Updating /etc/hosts file..."
-    echo
     sudo bash -c "cat > /etc/hosts << EOF
 $hosts
 EOF"
+echo
 fi
 
 
@@ -307,29 +484,70 @@ chill() {
     node ~/scripts/tuya-control/remote.js pluh-1 on
 }
 
+# --- COLORS ---
+#RED='\e[31m'
+#PURPLE='\e[35m'
+#CYAN='\e[36m'
+#ORANGE='\e[38;5;208m'
+#BOLD='\e[1m'
+#NC='\e[0m'
+
 whois_func() {
     command whois "$1" | sed \
-    -e "/^%/d" \
-    -e "s/Registrar:/\x1b[35m&\x1b[0m/g" \
-    -e "s/Registrant:/\x1b[35m&\x1b[0m/g" \
-    -e "s/Name servers:/\x1b[35m&\x1b[0m/g" \
-    -e "/status:/s/status:\(.*\)/\x1b[35mstatus:\x1b[36m\1\x1b[0m/" \
-    -e "/Status:/s/Status:\(.*\)/\x1b[35mStatus:\x1b[36m\1\x1b[0m/" \
-    -e "s/Not Disclosed/\x1b[31m&\x1b[0m/g" \
-    -e "s/NOT DISCLOSED!/\x1b[31m&\x1b[0m/g" \
-    -e "/Registrar:/,/^$/s/\(name:\)\(.*\)/\1\x1b[36m\2\x1b[0m/" \
-    -e "/Registrar:/,/^$/s/\(Name:\)\(.*\)/\1\x1b[36m\2\x1b[0m/" \
-    -e "/Registrant:/,/^$/s/\(name:\)\(.*\)/\1\x1b[36m\2\x1b[0m/" \
-    -e "/Domain:/,/^$/s/\(name:\)\(.*\)/\1\x1b[35m\2\x1b[0m/" \
-    -e "/^nserver:/s/\(nserver:\)\(.*\)/\1\x1b[36m\2\x1b[0m/" \
-    -e "/Name Server:/s/\(Name Server:\)\(.*\)/\1\x1b[36m\2\x1b[0m/" \
-    -e "/netname:/s/netname:\(.*\)/\x1b[35mnetname:\x1b[36m\1\x1b[0m/" \
-    -e "/country:/s/country:\(.*\)/\x1b[35mcountry:\x1b[36m\1\x1b[0m/" \
-    -e "/Country:/s/Country:\(.*\)/\x1b[35mCountry:\x1b[36m\1\x1b[0m/" \
-    -e "s/^\(.*\)$/\x1b[32m\1\x1b[0m/" \
-    -e "s/\x1b\[35m.*\x1b\[0m/\x1b[0m&\x1b[0m/" \
-    -e "s/\x1b\[36m.*\x1b\[0m/\x1b[0m&\x1b[0m/" \
-    -e "s/\x1b\[33m.*\x1b\[0m/\x1b[0m&\x1b[0m/"
+    -e 's/^ \{3\}\([A-Z][A-Za-z /]*:\)/\1/' \
+    -e '/^%/d' \
+    -e '/^#/d' \
+    -e '/^TERMS OF USE:/,/^$/d' \
+    -e '/^NOTICE:/,/^$/d' \
+    -e '/^Search results may not be used for commercial,/,/^$/d' \
+    -e '/^The data in MarkMonitor ^\`^ys WHOIS/,/^$/d' \
+    -e '/^By submitting a WHOIS query,/,/^$/d' \
+    -e '/^If you have a legitimate interest/,/^$/d' \
+    -e '/^This listing is a Network Solutions Private Registration./,/^$/d' \
+    -e '/^The data in MarkMonitor’s WHOIS database is provided for/,/^$/d' \
+    -e "/^Domain:/s/\(Domain: \)\(\S\+\)/\1${PURPLE_WHOIS}\2${NC_WHOIS}/" \
+    -e "/Domain Name:/s/\(Domain Name: \)\(\S\+\)/\1${PURPLE_WHOIS}\2${NC_WHOIS}/" \
+    -e "s/^\(REGISTRAR:\)/${PURPLE_WHOIS}\1${NC_WHOIS}/" \
+    -e "s/^\(DOMAIN NAME:\s*\)\(.*\)/\1${PURPLE_WHOIS}\2${NC_WHOIS}/" \
+    -e "s/Registrar:/${PURPLE_WHOIS}&${NC_WHOIS}/g" \
+    -e "s/Registrant:/${PURPLE_WHOIS}&${NC_WHOIS}/g" \
+    -e "s/Name servers:/${PURPLE_WHOIS}&${NC_WHOIS}/g" \
+    -e "/status:.*prohibited/I s/status:\(.* \)\(\([a-zA-Z ]*prohibited\)\)\(.*\)/${PURPLE_WHOIS}status:${CYAN_WHOIS}\1${RED_WHOIS}\2 ${NC_WHOIS}\4/" \
+    -e "/status:/s/status:\(.*\)/${PURPLE_WHOIS}status:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "/Status:.*Prohibited/I s/Status:\(.* \)\(\([a-zA-Z ]*Prohibited\)\)\(.*\)/${PURPLE_WHOIS}Status:${CYAN_WHOIS}\1${RED_WHOIS}\2 ${NC_WHOIS}\4/" \
+    -e "/Status:/s/Status:\(.*\)/${PURPLE_WHOIS}Status:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "s/Not Disclosed/${RED_WHOIS}&${NC_WHOIS}/g" \
+    -e "s/NOT DISCLOSED!/${RED_WHOIS}&${NC_WHOIS}/g" \
+    -e "s/REDACTED FOR PRIVACY/${RED_WHOIS}&${NC_WHOIS}/g" \
+    -e "/Registrar:/,/^$/s/\(name:\)\(.*\)/\1${CYAN_WHOIS}\2${NC_WHOIS}/" \
+    -e "/Registrar:/,/^$/s/\(Name:\)\(.*\)/\1${CYAN_WHOIS}\2${NC_WHOIS}/" \
+    -e "/Registrant:/,/^$/s/\(name:\)\(.*\)/\1${CYAN_WHOIS}\2${NC_WHOIS}/" \
+    -e "/Domain:/,/^$/s/\(name:\)\(.*\)/\1${PURPLE_WHOIS}\2${NC_WHOIS}/" \
+    -e "/^nserver:/s/\(nserver:\)\(.*\)/\1${CYAN_WHOIS}\2${NC_WHOIS}/" \
+    -e "/Name servers:/,/^$/s/^\([[:space:]]\+\)\([a-z0-9.-]\+\)/\1${CYAN_WHOIS}\2${NC_WHOIS}/" \
+    -e "/Name Server:/s/\(Name Server:\)\(.*\)/\1${CYAN_WHOIS}\2${NC_WHOIS}/" \
+    -e "/netname:/s/netname:\(.*\)/${PURPLE_WHOIS}netname:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "/Netname:/s/Netname:\(.*\)/${PURPLE_WHOIS}Netname:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "/NetName:/s/NetName:\(.*\)/${PURPLE_WHOIS}NetName:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "/OrgName:/s/OrgName:\(.*\)/${PURPLE_WHOIS}OrgName:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "/City:/s/City:\(.*\)/${PURPLE_WHOIS}City:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "/Organization:/s/Organization:\(.*\)/${PURPLE_WHOIS}Organization:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "/StateProv:/s/StateProv:\(.*\)/${PURPLE_WHOIS}StateProv:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "/Language:/s/Language:\(.*\)/${PURPLE_WHOIS}Language:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "/country:/s/country:\(.*\)/${PURPLE_WHOIS}country:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "/Country:/s/Country:\(.*\)/${PURPLE_WHOIS}Country:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "/role:/s/role:\(.*\)/${PURPLE_WHOIS}role:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "/domain.............:/s/domain.............:\(.*\)/${PURPLE_WHOIS}domain.............:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "/status.............:/s/status.............:\(.*\)/${PURPLE_WHOIS}status.............:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "/RegistryLock.......:/s/RegistryLock.......:\(.*\)/${PURPLE_WHOIS}RegistryLock.......:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "/city...............:/s/city...............:\(.*\)/${PURPLE_WHOIS}city...............:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "/registrar..........:/s/registrar..........:\(.*\)/${PURPLE_WHOIS}registrar..........:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "/country............:/s/country............:\(.*\)/${PURPLE_WHOIS}country............:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "/name...............:/s/name...............:\(.*\)/${PURPLE_WHOIS}name...............:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "/nserver............:/s/^\(nserver............:\s*\)\([^[]*\)\(\(\[[^]]*\]\s*\)*\[Technical check not done\]\)/${PURPLE_WHOIS}\1${CYAN_WHOIS}\2${RED_WHOIS}\3${NC_WHOIS}/" \
+    -e "/nserver............:/s/^\(nserver............:\s*\)\([^\[]*\)\(.*\)\(\[OK\]\)/${PURPLE_WHOIS}\1${CYAN_WHOIS}\2${GRAY_WHOIS}\3${GREEN_WHOIS}\4${NC_WHOIS}/" \
+    -e "/nserver............:/s/^\(nserver............:\s*\)\([^[]*\)\(\(\[[^]]*\]\s*\)*\[[^]]*\]\)/${PURPLE_WHOIS}\1${CYAN_WHOIS}\2${YELLOW_WHOIS}\3${NC_WHOIS}/" \
+    -e "s/^.*$/${GRAY_WHOIS}&${NC_WHOIS}/"
 }
 alias whois='whois_func'
 
@@ -392,9 +610,9 @@ else
     colored_hostname="${RED}${c_hostname}${NC}"
 fi
 echo -e "  ${BOLD}Hostname:${NC} ${PURPLE}$colored_hostname${NC}"
-echo -e "  ${BOLD}Local IPv4:${NC} ${PURPLE}$(hostname -I 2>/dev/null | awk '{print $1}')${NC}"
-echo -e "  ${BOLD}Public IPv4:${NC} ${PURPLE}$(dig +short txt ch whoami.cloudflare @1.1.1.1 | tr -d '"')${NC}"
-vpn_ip=$(hostname -I | tr ' ' '\n' | grep -E '^10\.' | head -n1)
+echo -e "  ${BOLD}Local IPv4:${NC} ${PURPLE}$(hostname -I >/dev/null 2>&1 | awk '{print $1}')${NC}"
+echo -e "  ${BOLD}Public IPv4:${NC} ${PURPLE}$(IP=$(timeout 0.2 dig +short txt ch whoami.cloudflare @1.1.1.1 2>/dev/null | tr -d '"'); if [ -n "$IP" ]; then echo "$IP"; else curl -s https://icanhazip.com; fi)${NC}"
+vpn_ip=$(hostname -I >/dev/null 2>&1 | tr ' ' '\n' | grep -E '^10\.' | head -n1)
 
 if [[ -n "$vpn_ip" ]]; then
     echo -e "  ${BOLD}VPN:${NC} ${PURPLE}${vpn_ip}${NC}"
