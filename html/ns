@@ -2,7 +2,7 @@
 
 
 input="$1"
-domain=${input#http*://}; domain=${domain%%/*}
+domain=${input#http*://}; domain=${domain%%/*}; domain=${domain,,}
 # --- USAGE ---
 if [ -z "$domain" ]; then
     echo "Usage: $0 <domain>"
@@ -48,19 +48,23 @@ done
 # DKIM
 declare -A DKIM_HOSTS=(
     ["ZONE"]="zone._domainkey"
-    ["ELKDATA_?"]="mail-out._domainkey"
+    ["ELKDATA"]="mail-out._domainkey"
     ["GOOGLE"]="google._domainkey"
     ["ZOHO"]="zmail._domainkey"
-    ["selector_1"]="selector1._domainkey"
-    ["selector_2"]="selector2._domainkey"
+    ["selector1"]="selector1._domainkey"
+    ["selector2"]="selector2._domainkey"
+    ["ZPANEL"]="default._domainkey"
     ["ICLOUD"]="icloud._domainkey"
     ["DIRECTO"]="directo._domainkey"
-    ["MAILCHIMP_1"]="mte1._domainkey"
-    ["MAILCHIMP_2"]="mte2._domainkey"
+    ["MAILCHIMP_mte1"]="mte1._domainkey"
+    ["MAILCHIMP_mte2"]="mte2._domainkey"
     ["EXCELLENT"]="smtp4._domainkey"
+    ["AMAZONSES"]="resend._domainkey"
     ["ZENDESK_1"]="zendesk1._domainkey"
     ["ZENDESK_2"]="zendesk2._domainkey"
     ["MANDRILL"]="mandrill._domainkey"
+    ["s1"]="s1._domainkey"
+    ["s2"]="s2._domainkey"
 )
 dkim_found=""
 for provider in "${!DKIM_HOSTS[@]}"; do
@@ -79,7 +83,7 @@ echo -e "${BOLD}${PURPLE}──═━┈━═──${NC}"
 # --- SITE ---
 check_site() {
     local proto=$1
-    status_code=$(curl -s -L --max-time 10 -o /dev/null -w "%{http_code}" "$proto://$domain")
+    status_code=$(timeout 3 curl -s -L --max-time 10 -o /dev/null -w "%{http_code}" "$proto://$domain")
     if [[ "$status_code" =~ ^[234] ]]; then
         echo "$proto"
     fi
@@ -88,8 +92,8 @@ protocol=$(check_site https)
 protocol=${protocol:-$(check_site http)}
 
 ## CREATE THE FINAL URL
-get_final_url=$(curl -s -o /dev/null -w "%{http_code} %{url_effective}" -L "http://$domain" | awk '$1 ~ /^(2|3|417)/ {print $2}')
-meta_redirect=$(curl -s "http://$domain" | grep -i '<meta http-equiv="refresh"' | grep -oP 'url=\K[^"]+')
+get_final_url=$(timeout 3 curl -s -o /dev/null -w "%{http_code} %{url_effective}" -L "http://$domain" | awk '$1 ~ /^(2|3|4)/ {print $2}')
+meta_redirect=$(timeout 3 curl -s "http://$domain" | grep -i '<meta http-equiv="refresh"' | grep -oP 'url=\K[^"]+')
 if [[ -n "$meta_redirect" ]]; then
     get_final_url="$meta_redirect"
 fi
@@ -97,7 +101,7 @@ fi
 http_off=false
 if [[ -z "$get_final_url" ]]; then
     http_off=true
-    get_final_url=$(curl -s -o /dev/null -w "%{http_code} %{url_effective}" -L "https://$domain" | awk '$1 ~ /^(2|3|417)/ {print $2}')
+    get_final_url=$(timeout 3 curl -s -o /dev/null -w "%{http_code} %{url_effective}" -L "https://$domain" | awk '$1 ~ /^(2|3|417)/ {print $2}')
 fi
 final_url_rem_slash="${get_final_url%/}"
 final_url="$(
@@ -116,12 +120,14 @@ declare -A http_codes=(
   [401]="Unauthorized"
   [403]="Forbidden"
   [404]="Not Found"
+  [409]="Conflict"
+  [421]="Misdirected Request"
   [417]="Expectation Failed"
   [418]="I’m a teapot"
   [500]="Internal Server Error"
   [503]="Service Unavailable"
 )
-site_status_code=$(curl -s -H "Expect:" -o /dev/null -w "%{http_code}" -L "$protocol://$domain")
+site_status_code=$(timeout 3 curl -s -H "Expect:" -o /dev/null -w "%{http_code}" -L "$protocol://$domain")
 #site_status_code=$(curl -s -H "Expect:" -o /dev/null -w "%{http_code}" -L "http://$domain")
 
 site_status=$(
@@ -129,7 +135,7 @@ if [[ "$site_status_code" == "200" ]]; then
     echo -e "${GREEN}$site_status_code ${GRAY}(${GREEN}${http_codes[$site_status_code]}${GRAY})${GRAY}"
 elif [[ "$site_status_code" == "301" || "$site_status_code" == "308" ]]; then
     ### SSL CERT PROBBLEM CHECK
-    curl -IL "$final_url_rem_slash" >/dev/null 2>&1
+    timeout 3 curl -IL "$final_url_rem_slash" >/dev/null 2>&1
     curl_exit=$?
     if [ $curl_exit -eq 60 ]; then
         failed_status_curl="SSL cert problem"
@@ -140,7 +146,7 @@ elif [[ "$site_status_code" == "301" || "$site_status_code" == "308" ]]; then
     fi
     echo -e "${RED}$site_status_code ${GRAY}(${RED}${http_codes[$site_status_code]}${GRAY}) - ${RED}$failed_status_curl${GRAY}"
 else
-    echo -e "${RED}$site_status_code ${RED}$site_status_code ${GRAY}(${RED}${http_codes[$site_status_code]:-Unknown}${GRAY})${GRAY}"
+    echo -e "${RED}$site_status_code ${GRAY}(${RED}${http_codes[$site_status_code]:-Unknown}${GRAY})${GRAY}"
 fi
 )
 
@@ -159,11 +165,10 @@ if [ -n "$protocol" ]; then
     if [[ "${final_url_rem_slash#http*://}" == "www.$domain" ]]; then
         extra_info+="(${YELLOW}REDIRECT${GRAY} to ${BLUE}WWW${GRAY}) "
     elif [[ "${final_url_rem_slash#http*://}" != "$domain" ]]; then
-        extra_info+="(${YELLOW}REDIRECT${GRAY} to $final_url) "
+        extra_info+="(${YELLOW}REDIRECT${GRAY} to ${BLUE}${final_url_rem_slash#http*://}${GRAY}) "
     fi
     ### BLANK PAGE CHECK
-    if [ "$(curl -sL --max-time 10 "$protocol://$domain" | wc -c)" -eq 0 ]; then
-    #if [ -z "$(curl -sL $protocol://$domain)" ]; then
+    if [[ "$(timeout 3 curl -sL --max-time 10 "$protocol://$domain" | wc -c)" -eq 0 ]] && [[ "$site_status_code" != "301" && "$site_status_code" != "308" ]]; then
         extra_info+="(${RED}BLANK PAGE${GRAY}) "
     fi
 fi
@@ -172,8 +177,8 @@ echo -e "${PURPLE}──────${GRAY}"
 
 ## CMS
 if [ -n "$protocol" ]; then
-    headers=$(curl -sI "$protocol://$domain" | tr -d '\000')
-    html=$(curl -sL --max-time 10 "$protocol://$domain" | tr -d '\000')
+    headers=$(timeout 3 curl -sI "$protocol://$domain" | tr -d '\000')
+    html=$(timeout 3 curl -sL --max-time 10 "$protocol://$domain" | tr -d '\000')
     declare -A cms_patterns=(
         ["WordPress"]="wp-includes"
         ["Joomla"]="Joomla!"
@@ -184,29 +189,58 @@ if [ -n "$protocol" ]; then
         ["TYPO3"]="TYPO3"
         ["Squarespace"]="Squarespace"
         ["Wix"]="Wix.com"
+        ["Voog"]="voog.com"
         ["GoDaddy Website Builder"]="website-builder-data-prod"
         ["GoDaddy Website Builder"]="Go Daddy Website Builder"
         ["Google Hosted"]="lh3.googleusercontent.com"
-        ["Ghost"]="Ghost"
-        ["Default Hosting Page"]="construction"
+        ["SiteBuilder (Site.pro)"]="wb_element"
+        ["Default Hosting Page ?"]="construction"
         ["Default Domain Page"]="Your domain has been registered but"
+        ["Dept Suspension"]="The maintainer of the website can review their outstanding obligations in the Control Panel."
         ["Veebimajutus.ee"]="veebimajutus\.ee"
     )
     found=false
+    found_cms=""
     for cms in "${!cms_patterns[@]}"; do
         if echo "$html" | grep -qi "${cms_patterns[$cms]}"; then
             echo -e "${GREEN}$cms${GRAY}"
             found=true
+            found_cms="$cms"
             break
         fi
     done
-#    if [[ "$ip" == "217.146.70.51" ]]; then
-#        echo -e "${GREEN}Zone URL record${GRAY}${NC}"
-#    else
-#    fi
         if ! $found; then
             echo -e "${YELLOW}Unknown CMS${GRAY}"
+            score=0
+            score_goal=30
+            hit() {
+                local regex="$1"
+                local points="$2"
+                local name="$3"
+                if echo "$html" | grep -Eiq "$regex"; then
+                    echo -e "  [+] $name detected +$points"
+                    ((score+=points))
+                fi
+            }
+            hit "<section" 10 "section tag"
+            hit "<article" 10 "article tag"
+            hit "<nav" 10 "nav tag"
+            hit "/assets/|/static/|/src/|/dist/" 20 "custom asset directories"
+            hit "app\\.js|main\\.js|bundle\\.js" 10 "JS bundle files"
+            hit "[a-z]+__[a-z]+|[a-z]+--[a-z]+" 15 "BEM CSS classes"
+            hit "\\.min\\.js|\\.min\\.css" 5 "minified CSS/JS"
+            hit "/api/|/graphql" 20 "API endpoints"
+            hit "favicon\.ico|favicon\.png|icon-.*\.png" 5 "custom favicon"
+            hit "data-reactroot|id=\"app\"|ng-app" 15 "SPA frontend framework"
+            if (( score >= score_goal )); then
+                echo -e "${GREEN}self-made: ($score/$score_goal)${GRAY}"
+            else
+                echo -e "${RED}not self-made?: ($score/$score_goal)${GRAY}"
+            fi
         fi
+#        if ! $found; then
+#            echo -e "${YELLOW}Unknown CMS${GRAY}"
+#        fi
         ## SERVER INFO
         server=$(echo "$headers" | grep -i "^Server:" | cut -d' ' -f2-)
         [ -n "$server" ] && echo -e "${GRAY}Server: $server${NC}"
@@ -229,22 +263,45 @@ echo -e "${PURPLE} A ${NC}$([ -n "$ip" ] && echo -e ${GREEN}+${GRAY} || echo -e 
 echo -e "${PURPLE}───${GRAY}"
 if [ -n "$ip" ]; then
     ptr=$(host "$(echo "$ip" | head -n 1)" | grep -i "pointer" | awk '{print $5}')
-    sleep 1
-    netname=$(whois "$(echo "$ip" | head -n 1)" 2>/dev/null | awk 'tolower($1) == "netname:" {print $2; exit}' | tr -d '\r')
+#    sleep 1
+    netname=$(whois "$(echo "$ip" | tail -n 1)" 2>/dev/null | grep -i netname | cut -d: -f2 | xargs)
+    country=$(whois "$(echo "$ip" | tail -n 1)" 2>/dev/null | grep -i country | tail -n 1 | cut -d: -f2 | xargs)
     if [ -z "$netname" ]; then
         netname="${YELLOW}unknown"
     else
+        ### KNOWN IP CHECKS
         if [[ "$ip" == "217.146.70.51" ]]; then
             netname="${GREEN}Zone URL record"
+        elif [[ "$ip" == "185.31.240.240" ]]; then
+            netname="${GREEN}Default Domain Page"
+        elif [[ "$ip" == "212.123.41.108" ]]; then
+            netname="${RED}ICANN Contact Verify Page"
+        elif [[ "$ip" == "85.222.234.14" ]]; then
+            netname="${BLUE}EE-ZONE-UVN-VOOG"
         fi
+        ### KNOWN COUNTRY CHECKS
+        if [[ "$country" != "EE" ]]; then
+            country=" ${GRAY}(${RED}$country${GRAY})"
+        else
+            country=""
+        fi
+
     fi
-    echo -e "$ip (${BLUE}$netname${GRAY}) $ptr"
+    echo -e "$ip (${BLUE}$netname${GRAY})$country $ptr"
     echo
 fi
 
 
+# --- CNAME ---
+echo -e "${PURPLE} CNAME ${NC}$([ -n "$cname_found" ] && echo -e "${GREEN}+${NC}" || echo -e "${RED}-${NC}")"
+echo -e "${PURPLE}───────${NC}"
+if [ -n "$cname_found" ]; then
+    echo -e "$cname_found"
+fi
+
+
 echo
-echo -e "${BOLD}${PURPLE}  EMAIL  ${GRAY}$([ -n "$ns_dns" ] && [ -n "$mx_dns" ] && [ -n "$spf_dns" ] && [ -n "$dkim_found" ] && echo -e "${GREEN}+${NC}" || echo "${RED}-${NC}")"
+echo -e "${BOLD}${PURPLE}  EMAIL  ${GRAY}$([ -n "$ns_dns" ] && [ -n "$mx_dns" ] && [ -n "$spf_dns" ] && [ -n "$dkim_found" ] && [ -n "$dmarc_dns" ] && echo -e "${GREEN}+${NC}" || echo "${RED}-${NC}")"
 echo -e "${BOLD}${PURPLE}──═━┈━═──${NC}"
 
 
@@ -298,13 +355,6 @@ echo -e "${BOLD}${PURPLE}  OTHER  ${GRAY}"
 echo -e "${BOLD}${PURPLE}──═━┈━═──${NC}"
 
 
-# --- CNAME ---
-echo -e "${PURPLE} CNAME ${NC}$([ -n "$cname_found" ] && echo -e "${GREEN}+${NC}" || echo -e "${RED}-${NC}")"
-echo -e "${PURPLE}───────${NC}"
-if [ -n "$cname_found" ]; then
-    echo -e "$cname_found"
-fi
-
 # --- TXT ---
 echo -e "${PURPLE} TXT ${NC}$([ -n "$txt_dns" ] && echo -e ${GREEN}+${GRAY} || echo -e ${RED}-${GRAY})"
 echo -e "${PURPLE}─────${GRAY}"
@@ -318,8 +368,25 @@ fi
 if [[ " $@ " =~ " -f " ]]; then
 
 
+# --- CMS BASED SCANNING ---
+## WORDPRESS
+if [[ "$cms" == "WordPress" ]]; then
+    site_and_home_url=$(timeout 3 curl -sL "$domain/wp-json" | jq '{url,home}')
+fi
+echo -e "${PURPLE} CMS SCAN ${NC}$([ -n "$site_and_home_url" ] && echo -e ${GREEN}+${GRAY} || echo -e ${RED}-${GRAY})"
+echo -e "${PURPLE}──────────${GRAY}"
+if [[ "$cms" == "WordPress" ]]; then
+    if [[ -n "$site_and_home_url" ]]; then
+        echo -e "$site_and_home_url"
+    else
+        echo -e "${RED}Site and Home URL's not found."
+    fi
+    echo
+fi
+
+
 # --- SUBDOMAINS ---
-subdomains=$(curl -s "https://crt.sh/?q=%25.$domain&output=json" | \
+subdomains=$(timeout 3 curl -s "https://crt.sh/?q=%25.$domain&output=json" | \
     grep -oP '"name_value":"\K[^"]+' | \
     sed 's/\\n/\n/g' | \
     sed 's/\*\.//g' | \
@@ -334,11 +401,11 @@ if [ -n "$subdomains" ]; then
         # PING CHECK
         if ping -c1 -W1 "$sub" &>/dev/null; then
             # GET FINAL URL + STATUS CODE
-            read -r sub_code redirect <<< "$(curl -s -o /dev/null -w "%{http_code} %{url_effective}" -L --max-time 10 "http://$sub")"
+            read -r sub_code redirect <<< "$(timeout 3 curl -s -o /dev/null -w "%{http_code} %{url_effective}" -L --max-time 10 "http://$sub")"
             # IF HTTP OFF - TRY HTTPS
             if [ "$sub_code" == "000" ]; then
                 sub_http_off=true
-                read -r sub_code redirect <<< "$(curl -s -o /dev/null -w "%{http_code} %{url_effective}" -L --max-time 10 "https://$sub")"
+                read -r sub_code redirect <<< "$(timeout 3 curl -s -o /dev/null -w "%{http_code} %{url_effective}" -L --max-time 10 "https://$sub")"
                 redirect=""
             fi
             clean_redirect="${redirect%/}"
@@ -352,7 +419,7 @@ if [ -n "$subdomains" ]; then
             elif [ "$sub_code" == "200" ]; then
                 code_info="(${GREEN}${sub_code} ${http_codes[$sub_code]}${GRAY})"
             elif [[ "$sub_code" == "301" || "$sub_code" == "308" ]]; then
-                curl -IL "https://$sub" >/dev/null 2>&1
+                timeout 3 curl -IL "https://$sub" >/dev/null 2>&1
                 curl_exit=$?
                 if [ $curl_exit -eq 60 ]; then
                     failed_status_curl="SSL cert problem"
@@ -368,9 +435,9 @@ if [ -n "$subdomains" ]; then
             # REDIRECT DETECT
             if [[ -n "$redirect" && "$clean_redirect" != "http://$sub" && "$clean_redirect" != "https://$sub" ]]; then
                 if [[ "$clean_redirect" == https://* ]]; then
-                    proto="${GRAY}https${GRAY}"
+                    proto="${YELLOW}https"
                 else
-                    proto="${RED}HTTP${GRAY}"
+                    proto="${RED}HTTP${YELLOW}"
                 fi
                 sub="${YELLOW}$sub${GRAY}"
                 target="${clean_redirect#http*://}"
@@ -384,7 +451,7 @@ if [ -n "$subdomains" ]; then
         if [ $sub_http_off == true ];then
             sub_http_off_info="${GRAY}(${RED}HTTP is turned OFF${GRAY})${GRAY}"
         fi
-        echo -e "[${GREEN}$sub${GRAY}]$redirect_info $code_info $sub_http_off_info"
+        echo -e "[${GREEN}$sub${GRAY}]$redirect_info${GRAY} $code_info $sub_http_off_info"
     done
     echo
 fi
