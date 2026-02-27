@@ -1,10 +1,12 @@
 #!/bin/bash
 
+
 # --- CONFIG ---
 DEVICE_IP="192.168.1.4"
 was_home=0
 offline_since=0
 offline_delay=2
+
 
 # --- CHECK IF DEVICE DISPLAY IS ON ---
 is_tv_on() {
@@ -12,6 +14,7 @@ is_tv_on() {
     state=$(timeout 5 adb shell dumpsys display 2>/dev/null | grep 'mState=' | cut -d'=' -f2)
     [[ "$state" == "ON" ]]
 }
+
 
 # --- CHECK IF DEVICE WAS ONLINE AT THE START OF THE SCRIPT ---
 if is_tv_on; then
@@ -22,16 +25,18 @@ else
     was_home=0
 fi
 
+
 # --- MAIN LOOP ---
 while true; do
     now=$(date +%s)
     # IF DEVICE IS ONLINE
 
     # --- SET VOLUME DOWN FOR SET TIME ---
-    current_hour=$(date +%H)
+    current_hour=$(date +%-H)
     current_volume=$(pactl get-sink-volume @DEFAULT_SINK@ | awk '{print $5}' | head -n1 | tr -d '%')
-    if (( (current_hour >= 23 || current_hour < 12) && current_volume > 75 )); then
+    if (( (current_hour >= 23 || current_hour <= 11) && current_volume > 75 )); then
         pactl set-sink-volume @DEFAULT_SINK@ 75%
+        catt -d $DEVICE_IP volume 40
         espeak-ng -v en-gb-x-r "it's past 11, turning volume down"
     fi
 
@@ -39,13 +44,14 @@ while true; do
         echo "[DEBUG] Device online, was_home=$was_home, offline_since=$offline_since"
 
         if [[ $was_home -eq 0 ]]; then
-            current_hour=$(date +%H)
             # IF ITS MORNING THEN RUN MORNING COMMANDS
-            if (( current_hour >= 6 && current_hour < 11 )); then
+            if (( current_hour >= 6 && current_hour <= 11 )); then
                 echo "$(date '+%F %T') running MORNING commands..."
                 (
                     # --- MORNING COMMANDS ---
+                    ssh t-pm bash -ic dispon
                     pactl set-sink-volume @DEFAULT_SINK@ 55%
+                    catt -d $DEVICE_IP volume 40
                     espeak-ng -v en-gb-x-r "good morning!"
                     node ~/scripts/tuya-control/remote.js bulb-1 on
                     node ~/scripts/tuya-control/remote.js bulb-1 mode color orangebulb
@@ -58,25 +64,14 @@ while true; do
                     playerctl volume 0.8 -p spotify
                     playerctl play -p spotify
                     playerctl next -p spotify
-                    #hyprctl dispatch dpms on HDMI-A-1
-                    #adb shell input keyevent KEYCODE_WAKEUP
-                    #adb shell input text "q"
-                    #adb shell input keyevent KEYCODE_HOME
-                    #adb shell input keyevent KEYCODE_HOME
-                    #sleep 2
-                    #adb shell input keyevent KEYCODE_DPAD_CENTER
-                    #adb shell input text "q"
-                    #adb shell input keyevent KEYCODE_ENTER
-                    #adb shell input text "ssh%stihkel@192.168.1.2"
-                    #adb shell input keyevent KEYCODE_ENTER
-                    #adb shell input text "ksk"
-                    #adb shell input keyevent KEYCODE_ENTER
                 ) &
             else
                 echo "$(date '+%F %T') running WELCOME BACK commands..."
                 (
                     # --- WELCOME BACK COMMANDS ---
+                    ssh t-pm bash -ic dispon
                     pactl set-sink-volume @DEFAULT_SINK@ 100%
+                    catt -d $DEVICE_IP volume 40
                     espeak-ng -v en-gb-x-r "welcome back!"
                     node ~/scripts/tuya-control/remote.js bulb-1 on
                     node ~/scripts/tuya-control/remote.js bulb-1 mode scene purplebulb
@@ -89,19 +84,6 @@ while true; do
                     playerctl volume 0.8 -p spotify
                     playerctl play -p spotify
                     playerctl next -p spotify
-                    #hyprctl dispatch dpms on HDMI-A-1
-                    #adb shell input keyevent KEYCODE_WAKEUP
-                    #adb shell input text "q"
-                    #adb shell input keyevent KEYCODE_HOME
-                    #adb shell input keyevent KEYCODE_HOME
-                    #sleep 2
-                    #adb shell input keyevent KEYCODE_DPAD_CENTER
-                    #adb shell input text "q"
-                    #adb shell input keyevent KEYCODE_ENTER
-                    #adb shell input text "ssh%stihkel@192.168.1.2"
-                    #adb shell input keyevent KEYCODE_ENTER
-                    #adb shell input text "ksk"
-                    #adb shell input keyevent KEYCODE_ENTER
                 ) &
             fi
             was_home=1
@@ -125,8 +107,6 @@ while true; do
                 echo -e "\n$(date '+%F %T') running offline commands..."
                 (
                     # --- OFFLINE COMMANDS ---
-                    swaylock -f
-                    hyprctl dispatch dpms off HDMI-A-1
                     node ~/scripts/tuya-control/remote.js led off
                     node ~/scripts/tuya-control/remote.js pluh-1 off
                     node ~/scripts/tuya-control/remote.js pluh-2 off
