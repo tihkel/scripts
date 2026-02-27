@@ -1,40 +1,58 @@
 #!/bin/bash
 
-# ==== CONFIG ==== #
-SINK_A="alsa_output.pci-0000_00_1f.3.hdmi-surround"   # Main speaker
-SINK_B="alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo" # AUX-USB
-DELAY_B=180   # Delay in ms for sink B (change this)
 
-# convert ms -> microseconds
+# --- CONFIG ---
+## MAIN SINK
+SINK_A=$(pactl list short sinks | grep hdmi-surround | awk '{print $2}')
+## SECONDARY SINK
+SINK_B=$(pactl list short sinks | grep GeneralPlus_USB_Audio_Device | awk '{print $2}')
+DELAY_B=180
+
+
+# --- LOGGING ---
+log() {
+    echo "[INFO] $*"
+}
+error() {
+    echo "[ERROR] $*"
+}
+
+
+## --- CHECK IF SINKS WERE FOUND ---
+if [ -z "$SINK_A" ] || [ -z "$SINK_B" ]; then
+    error "One of the sinks was not found."
+    exit 1
+fi
+
+
+# --- CONVERT MS to MICROSECONDS ---
 DELAY_US=$(($DELAY_B * 1000))
 
-echo "🔍 Waiting for PulseAudio sinks..."
+
+# --- DISCOVERING SINKS FOR MORE DEPENDANT CONNECTION ---
+log "Waiting for PulseAudio sinks..."
 while ! pactl list short sinks | grep -q "$SINK_A"; do sleep 1; done
 while ! pactl list short sinks | grep -q "$SINK_B"; do sleep 1; done
-echo "🎧 Sinks found."
+log "Sinks found."
 
-# Kill previous attempts
+
+# --- KILL ALL PREVIOUS ATTEMPTS (sinks) ---
 pactl unload-module module-null-sink 2>/dev/null
 pactl unload-module module-loopback 2>/dev/null
 pactl unload-module module-ladspa-sink 2>/dev/null
 pactl unload-module module-combine-sink 2>/dev/null
 
-# Create null master
-COMBINED=$(pactl load-module module-null-sink sink_name=COMB sink_properties=device.description="Combined_Output")
 
-# Loop both devices to the master
+# --- CREATE CUSTOM COMBINED SINK ---
+COMBINED=$(pactl load-module module-null-sink sink_name=COMB channels=6 sink_properties=device.description="Combined_Output")
+
+
+# --- ADD BOTH LOOP DEVICES TO COMBINED SINK ---
 LOOP_A=$(pactl load-module module-loopback source=COMB.monitor sink="$SINK_A" latency_msec=0)
 LOOP_B=$(pactl load-module module-loopback source=COMB.monitor sink="$SINK_B" latency_msec=$DELAY_B)
 
-# Make it the default output
+
+# --- MAKE COMBINED SINK AS THE DEFAULT OUTPUT ---
+log "Running COMBINED SINK as deafault output..."
 pactl set-default-sink COMB
 
-echo
-echo "=========================================================="
-echo " 🔊 Output unified using NULL master sink"
-echo " 🕒 Delay applied to $SINK_B → ${DELAY_B}ms"
-echo " 🎶 Play music — now adjust delay live via:"
-echo
-echo "     pactl unload-module $LOOP_B"
-echo "     pactl load-module module-loopback source=COMB.monitor sink=\"$SINK_B\" latency_msec=XXXX"
-echo "=========================================================="
