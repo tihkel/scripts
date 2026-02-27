@@ -1,9 +1,14 @@
 #!/bin/bash
 
 # --- START CHECK IF HOME (if not already) ---
-if ! pgrep -f "bash ~/scripts/max/check-if-home" >/dev/null 2>&1; then
-    bash ~/scripts/max/check-if-home >/dev/null 2>&1 &
+SCRIPT="/home/tihkel/scripts/max/check-if-home"
+
+if ! pgrep -fx "bash $SCRIPT" >/dev/null; then
+    bash "$SCRIPT" >/dev/null 2>&1 &
 fi
+#if ! pgrep -f "bash ~/scripts/max/check-if-home" >/dev/null 2>&1; then
+#    bash ~/scripts/max/check-if-home >/dev/null 2>&1 &
+#fi
 
 # --- KILL LAST AND CREATE NEW SESSION ---
 trap cleanup EXIT
@@ -61,15 +66,14 @@ fi
 pane7=$(tmux display-message -p "#{pane_id}")
 (
   while true; do
-    sleep 2
-    for i in {1..8}; do
-      tmux send-keys -t "$pane7" a
-      tmux send-keys -t "$pane7" a
-      tmux send-keys -t "$pane7" a
-      tmux send-keys -t "$pane7" a
+    sleep 1.5
+    for i in {1..4}; do
       sleep 1
+      tmux send-keys -t "$pane7" a
+      tmux send-keys -t "$pane7" a
+      tmux send-keys -t "$pane7" a
     done
-    sleep 1
+    sleep 0.5
     tmux send-keys -t "$pane7" q
   done
 ) &
