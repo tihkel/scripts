@@ -10,18 +10,20 @@ esac
 
 # --- COLORS ---
 RED='\e[31m'
+GREEN='\e[32m'
 PURPLE='\e[35m'
 CYAN='\e[36m'
 ORANGE='\e[38;5;208m'
 BOLD='\e[1m'
 NC='\e[0m'
 # PS1
-MAGENTA_PS1='\[\033[01;35m\]'
+MAGENTA_PS1='\[\033[35m\]' #tava magenta
 PURPLE_PS1='\[\033[01;34m\]'
 CYAN_PS1='\[\033[01;36m\]'
 GREEN_PS1='\[\e[32m\]'
 RED_PS1='\[\e[31m\]'
 ORANGE_PS1='\[\e[38;5;208m\]'
+BOLD_PS1='\[\e[1m\]'
 NC_PS1='\[\033[00m\]'
 # WHOIS
 PURPLE_WHOIS=$'\e[35m'
@@ -38,16 +40,6 @@ if [[ " $@ " =~ " -s " ]]; then
 fi
 
 
-# --- BASH COMPLETION ---
-if ! shopt -oq posix; then
-  if [ -f /usr/share/bash-completion/bash_completion ]; then
-    . /usr/share/bash-completion/bash_completion
-  elif [ -f /etc/bash_completion ]; then
-    . /etc/bash_completion
-  fi
-fi
-
-
 # --- SUDO COMMAND PERMS CHECK ---
 /usr/bin/sudo -n true 2>/dev/null
 SUDO_EXIT=$?
@@ -56,6 +48,66 @@ if [[ $SUDO_EXIT -gt 1 ]]; then
         echo "No sudo permissions."
 #        echo "Would have run: sudo $*" | tr '\n' ' ' | cut -c1-60
     }
+fi
+
+
+# --- APT UPDATE ---
+update_check_tmpfile="/tmp/update-check-$(date +%Y-%m-%d).tmp"
+if [ ! -f "$update_check_tmpfile" ]; then
+    rm -f /tmp/update-check-*.tmp
+    echo "Checking for updates..."
+    sudo apt update >/dev/null 2>&1
+    if apt list --upgradable 2>/dev/null | grep -i -v "listing" -q; then
+        echo "Updates available. Running update and upgrade..."
+        sudo apt upgrade -y && touch "$update_check_tmpfile"
+        echo
+    else
+        echo "No updates available today." && touch "$update_check_tmpfile"
+        echo
+    fi
+fi
+
+
+# --- APT INSTALL PACKAGES ---
+pkgs=(dpkg dig tree curl wget jq)
+missing_pkgs=()
+disp_pkgs=(xfce4-terminal xbindkeys wmctrl)
+missing_disp_pkgs=()
+## FIND MISSING PACKAGES
+for pkg in "${pkgs[@]}"; do
+    if ! command -v "$pkg" >/dev/null 2>&1; then
+        missing_pkgs+=("$pkg")
+    fi
+done
+## FIND MISSING DISPLAY PACKAGES
+for disp_pkg in "${disp_pkgs[@]}"; do
+    if ! command -v "$disp_pkg" >/dev/null 2>&1; then
+        missing_disp_pkgs+=("$disp_pkg")
+    fi
+done
+## INSTALL MISSING PACKAGES
+if [ ${#missing_pkgs[@]} -ne 0 ]; then
+    echo "Packages missing. Installing the following:"
+    echo -e "${GREEN}${missing_pkgs[*]}${NC}"
+    sudo apt install -y "${missing_pkgs[@]}"
+    echo
+fi
+## INSTALL MISSING DISPLAY PACKAGES IF $DISPLAY EXISTS
+if [ -n "$DISPLAY" ] && [ ${#missing_pkgs[@]} -ne 0 ]; then
+    echo "Display Packages missing. Installing the following:"
+    echo -e "${GREEN}${missing_disp_pkgs[*]}${NC}"
+    sudo apt install -y "${missing_disp_pkgs[@]}"
+    echo
+fi
+
+
+# --- BASH COMPLETION ---
+if ! shopt -oq posix 2>/dev/null; then
+  if [ -f /usr/share/bash-completion/bash_completion ]; then
+    . /usr/share/bash-completion/bash_completion
+  elif [ -f /etc/bash_completion ]; then
+    . /etc/bash_completion
+  fi
 fi
 
 
@@ -81,6 +133,12 @@ if [ -x /usr/bin/dircolors ]; then
 fi
 
 
+
+# --- SUDO NEEDED ---
+/usr/bin/sudo -n true 2>/dev/null
+SUDO_EXIT=$?
+if [[ $SUDO_EXIT -le 1 ]]; then
+
 # --- MODT ---
 # FIRMWARE UPDATES
 if [ -f /run/motd.d/85-fwupd ]; then
@@ -88,22 +146,62 @@ if [ -f /run/motd.d/85-fwupd ]; then
 fi
 # LOGIN MSG
 loginMsg=""
-if ! cmp -s <(echo "$loginMsg") /etc/motd; then
+if ! cmp -s <(echo "$loginMsg" 2>/dev/null) /etc/motd; then
     echo "Updating /etc/motd file..."
     sudo bash -c "echo '$loginMsg' > /etc/motd"
     echo
 fi
 # REMOVE DEFAULT LOGIN MSG
-if ! ls /etc/update-motd.d/ >/dev/null 2>&1; then
-    echo "Removing /etc/update-motd.d/ files..."
+if [ -d /etc/update-motd.d ] && [ "$(ls -A /etc/update-motd.d/)" ]; then
+    echo "Removing /etc/update-motd.d/* files..."
     sudo rm -f /etc/update-motd.d/*
     echo
 fi
 
 
+# --- HOSTS FILE SETUP ---
+hosts="
+127.0.0.1   localhost
+$([[ $(hostname) == "t-pm" ]] && echo "192.168.1.2" || echo "127.0.0.1")    $(hostname).lan $(hostname)
+::1         localhost ip6-localhost ip6-loopback
+ff02::1     ip6-allnodes
+ff02::2     ip6-allrouters
+
+# MY HOSTS
+192.168.1.2 t-pm
+192.168.1.3 t-lap
+192.168.1.4 t-teler
+192.168.1.5 t-k-debian
+192.168.1.7 t-pirukas
+192.168.1.200 t-v-debian
+
+# VPN
+10.182.94.1 t-pirukas.vpn
+10.182.94.4 t-pm.vpn
+10.182.94.5 t-lap.vpn
+10.182.94.6 t-k-debian.vpn
+10.182.94.8 t-v-debian.vpn
+
+
+# ZONE CUSTOM
+#217.146.69.x
+"
+if ! cmp -s <(echo "$hosts" 2>/dev/null) /etc/hosts; then
+    echo "Updating /etc/hosts file..."
+    sudo bash -c "cat > /etc/hosts << EOF
+$hosts
+EOF"
+echo
+fi
+
+# --- END OF SUDO NEEDED ---
+fi
+
+
+
 # --- REMOVE PACKAGES ---
 ## EXIM - mail
-if dpkg -l | grep -q "^ii  exim4"; then
+if command -v exim4 >/dev/null 2>&1; then
     echo "Exim4 detected. Removing..."
     sudo systemctl stop exim4
     sudo systemctl disable exim4
@@ -116,13 +214,16 @@ fi
 
 
 # --- CRONTAB ---
-backup_CJ="0 4 * * * BACKUP_DIR=/home/$USER/backups; MAX_BACKUPS=3; DATE=\$(date +\%F_\%H-\%M-\%S); mkdir -p \"\$BACKUP_DIR\"; tar --exclude=\"$USER/backups\" --exclude=\"$USER/jellyfin/media\" -czf \"\$BACKUP_DIR/\${DATE}_home_dir_backup_for_$USER@\$(hostname).tar.gz\" -C /home $USER >/dev/null; ls -1t \"\$BACKUP_DIR\" | tail -n +\$((MAX_BACKUPS+1)) | xargs -r -I {} rm -- \"\$BACKUP_DIR/{}\""
+backup_CJ="0 4 * * * BACKUP_DIR=/home/$USER/backups; MAX_BACKUPS=1; DATE=\$(date +\%F_\%H-\%M-\%S); mkdir -p \"\$BACKUP_DIR\"; tar --exclude=\"$USER/backups\" --exclude=\"$USER/vms\" --exclude=\"$USER/t-nas\" -czf \"\$BACKUP_DIR/\${DATE}_home_dir_backup_for_$USER@\$(hostname).tar.gz\" -C /home $USER >/dev/null; ls -1t \"\$BACKUP_DIR\" | tail -n +\$((MAX_BACKUPS+1)) | xargs -r -I {} rm -- \"\$BACKUP_DIR/{}\""
 
 # CHECK IF CRON EXISTS
-if ! diff -q <(crontab -l 2>/dev/null) <(printf '%s\n' "$backup_CJ") >/dev/null; then
-    echo "Updating home dir backup cronjob..."
-    echo "$backup_CJ" | crontab -
-    echo
+if command -v crontab >/dev/null 2>&1; then
+#if [ -n "$(command -v crontab >/dev/null 2>&1)" ]; then
+    if ! diff -q <(crontab -l 2>/dev/null) <(printf '%s\n' "$backup_CJ") >/dev/null; then
+        echo "Updating home dir backup cronjob..."
+        echo "$backup_CJ" | crontab -
+        echo
+    fi
 fi
 
 
@@ -133,7 +234,7 @@ set titlecolor magenta,black
 set tabstospaces
 set tabsize 4
 "
-if [ ! -f ~/.nanorc ] || ! cmp -s <(echo "$nanorc") ~/.nanorc; then
+if [ ! -f ~/.nanorc ] || ! cmp -s <(echo "$nanorc" 2>/dev/null) ~/.nanorc; then
     echo "Updating ~/.nanorc file..."
     cat > ~/.nanorc << EOF
 $nanorc
@@ -144,9 +245,17 @@ fi
 
 # --- CONF FILES ---
 ## BTOP
-BTOP_CONF='
+BTOP_CONF=$(cat <<EOF
 # Theme file
-color_theme = "/usr/share/btop/themes/HotPurpleTrafficLight.theme"
+color_theme = "$(
+if [[ "$(hostname)" == "t-k-debian" ]]; then
+    echo "/usr/share/btop/themes/kyli0x.theme"
+elif [[ "$(hostname)" == "t-vps" ]]; then
+    echo "/usr/share/btop/themes/gruvbox_dark.theme"
+else
+    echo "/usr/share/btop/themes/HotPurpleTrafficLight.theme"
+fi
+)"
 # Use theme background instead of terminal background
 theme_background = False
 # Enable 24-bit truecolor
@@ -248,8 +357,9 @@ custom_gpu_name2 = ""
 custom_gpu_name3 = ""
 custom_gpu_name4 = ""
 custom_gpu_name5 = ""
-'
-if ! [ -f ~/.config/btop/btop.conf ] || ! cmp -s <(echo "$BTOP_CONF") ~/.config/btop/btop.conf; then
+EOF
+)
+if ! [ -f ~/.config/btop/btop.conf ] || ! cmp -s <(echo "$BTOP_CONF" 2>/dev/null) ~/.config/btop/btop.conf; then
     echo "Updating ~/.config/btop/btop.conf file..."
     mkdir -p ~/.config/ ~/.config/btop/
     touch ~/.config/btop/btop.conf
@@ -261,72 +371,140 @@ fi
 # --- PS1 ---
 if [[ $(hostname) == "t-lap" ]]; then
     export PS1='\[\e]2;\u@\h: \w\a\]'"\
-${MAGENTA_PS1}"'\u'"\
-${PURPLE_PS1}"'@'"\
-${MAGENTA_PS1}"'\h'"\
+${BOLD_PS1}${MAGENTA_PS1}"'\u'"\
+${NC_PS1}${PURPLE_PS1}"'@'"\
+${BOLD_PS1}${MAGENTA_PS1}"'\h'"\
 ${NC_PS1}"':'"\
 ${PURPLE_PS1}"'\w'"\
 ${NC_PS1}"'\$ '
 elif [[ $(hostname) == "t-k-debian" ]]; then
     export PS1='\[\e]2;\u@\h: \w\a\]'"\
-${MAGENTA_PS1}"'\u'"\
-${CYAN_PS1}"'@'"\
-${MAGENTA_PS1}"'\h'"\
+${BOLD_PS1}${MAGENTA_PS1}"'\u'"\
+${NC_PS1}${CYAN_PS1}"'@'"\
+${BOLD_PS1}${MAGENTA_PS1}"'\h'"\
 ${NC_PS1}"':'"\
 ${CYAN_PS1}"'\w'"\
 ${NC_PS1}"'\$ '
 elif [[ $(hostname) == "t-vps" ]]; then
     export PS1='\[\e]2;\u@\h: \w\a\]'"\
-${MAGENTA_PS1}"'\u'"\
-${ORANGE_PS1}"'@'"\
-${MAGENTA_PS1}"'\h'"\
+${BOLD_PS1}${MAGENTA_PS1}"'\u'"\
+${NC_PS1}${ORANGE_PS1}"'@'"\
+${BOLD_PS1}${MAGENTA_PS1}"'\h'"\
 ${NC_PS1}"':'"\
 ${ORANGE_PS1}"'\w'"\
 ${NC_PS1}"'\$ '
+elif [[ $(hostname) == "t-pm" || $(hostname) == "t-v-debian" ]]; then
+    export PS1='\[\e]2;\u@\h: \w\a\]'"\
+${BOLD_PS1}${MAGENTA_PS1}"'\u'"\
+${NC_PS1}${GREEN_PS1}"'@'"\
+${BOLD_PS1}${MAGENTA_PS1}"'\h'"\
+${NC_PS1}"':'"\
+${GREEN_PS1}"'\w'"\
+${NC_PS1}"'\$ '
 else
     export PS1='\[\e]2;\u@\h: \w\a\]'"\
-${GREEN_PS1}"'\u'"\
-${GREEN_PS1}"'@'"\
-${RED_PS1}"'\h'"\
+${BOLD_PS1}${GREEN_PS1}"'\u'"\
+${NC_PS1}${GREEN_PS1}"'@'"\
+${BOLD_PS1}${RED_PS1}"'\h'"\
 ${NC_PS1}"':'"\
 ${GREEN_PS1}"'\w'"\
 ${NC_PS1}"'\$ '
 fi
 
 
-# --- HOSTS FILE SETUP ---
-hosts="
-127.0.0.1	localhost
-$([[ $(hostname) == "t-pm" ]] && echo "192.168.1.2" || echo "127.0.0.1")	$(hostname).lan $(hostname)
-::1		localhost ip6-localhost ip6-loopback
-ff02::1		ip6-allnodes
-ff02::2		ip6-allrouters
-
-# MY HOSTS
-192.168.1.2 t-pm
-192.168.1.3 t-lap
-192.168.1.4 t-teler
-192.168.1.5 t-k-debian
-192.168.1.7 t-pirukas
-192.168.1.200 t-v-debian
-
-# VPN
-10.182.94.1 t-pirukas.vpn
-10.182.94.4 t-pm.vpn
-10.182.94.5 t-lap.vpn
-10.182.94.6 t-k-debian.vpn
-10.182.94.8 t-v-debian.vpn
+# --- TIMEDATACTL ---
+if [ -n "$(command -v timedatactl >/dev/null 2>&1)" ] && [ "$(timedatectl show --property=Timezone --value)" != "Europe/Tallinn" ]; then
+    echo "Setting default timedatactl..."
+    sudo timedatectl set-timezone Europe/Tallinn
+    echo
+fi
 
 
-# ZONE CUSTOM
-#217.146.69.x
-"
-if ! cmp -s <(echo "$hosts") /etc/hosts; then
-    echo "Updating /etc/hosts file..."
-    sudo bash -c "cat > /etc/hosts << EOF
-$hosts
-EOF"
-echo
+# --- KEYBOARD LAYOUT ---
+if [ -n "$DISPLAY" ] && ! setxkbmap -query 2>/dev/null | grep -q "layout:.*ee"; then
+    echo "Setting default keyboard layout..."
+    setxkbmap ee
+    echo
+fi
+
+
+# --- SET DEFAULT TERMINAL ---
+default_term="/usr/bin/xfce4-terminal.wrapper"
+if [ -x "$default_term" ] && [ "$(readlink -f /usr/bin/x-terminal-emulator)" != "$default_term" ]; then
+    sudo update-alternatives --set x-terminal-emulator "$default_term"
+fi
+
+
+# --- XBINDKEYS CONF ---
+XBINDKEYS_CONF=$(cat <<EOF
+"firefox"
+  Alt + f
+"discord"
+  Alt + d
+"spotify"
+  Alt + s
+"code"
+  Alt + v
+"joplin"
+  Alt + j
+"wmctrl -c :ACTIVE:"
+  Alt + c
+"xfce4-terminal"
+  Alt + q
+EOF
+)
+if [ -n "$DISPLAY" ]; then
+    if [[ -z "$(pgrep xbindkeys)" ]] || ! cmp -s <(echo "$XBINDKEYS_CONF" 2>/dev/null) ~/.xbindkeysrc; then
+        echo "Updating ~/.xbindkeysrc conf..."
+        cat > ~/.xbindkeysrc <<EOF
+$XBINDKEYS_CONF
+EOF
+        killall xbindkeys
+        xbindkeys
+        echo
+    fi
+fi
+
+
+# --- DEAL WITH KALI (zshrc) ---
+if ! cmp -s <(echo "exec /bin/bash" 2>/dev/null) ~/.zshrc; then
+    echo "Updating ~/.zshrc to run bash..."
+    echo "exec /bin/bash" > ~/.zshrc
+    echo
+fi
+
+
+# --- SETUP FIREFOX PROFILE ---
+FIREFOX_CONF=$(cat <<'EOF'
+user_pref("ui.key.menuAccessKeyFocuses", false);
+user_pref("ui.systemUsesDarkTheme", 1);
+user_pref("full-screen-api.warning.timeout", 0);
+user_pref("media.videocontrols.picture-in-picture.enabled", false);
+user_pref("findbar.highlightAll", true);
+EOF
+)
+FIREFOX_PROFILES=$(ls -d ~/.mozilla/firefox/*.default* ~/.config/mozilla/firefox/*.default* 2>/dev/null)
+for FIREFOX_PROFILE in $FIREFOX_PROFILES; do
+    if [[ -d "$FIREFOX_PROFILE" ]]; then
+        if ! cmp -s <(echo "$FIREFOX_CONF") "$FIREFOX_PROFILE/user.js" 2>/dev/null; then
+            echo "Updating Firefox conf in $FIREFOX_PROFILE ..."
+            echo "$FIREFOX_CONF" > "$FIREFOX_PROFILE/user.js"
+            echo
+        fi
+    fi
+done
+
+
+# --- PREFER DARK MODE ---
+if command -v gsettings >/dev/null 2>&1; then
+    current_gnome_theme=$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null)
+    if [ -n "$current_gnome_theme" ] && [ "$current_gnome_theme" != "'prefer-dark'" ]; then
+        gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'
+    fi
+    current_cinnamon_theme=$(gsettings get org.cinnamon.desktop.interface gtk-theme 2>/dev/null)
+    if [ -n "$current_cinnamon_theme" ] && [ "$current_cinnamon_theme" != "'Mint-Y-Dark-Purple'" ]; then
+        gsettings set org.cinnamon.desktop.interface gtk-theme "Mint-Y-Dark-Purple"
+    fi
 fi
 
 
@@ -359,7 +537,7 @@ if command -v pactl >/dev/null 2>&1; then
         fi
     }
     # TRANSMITER TUNNEL
-    alias addt="pactl load-module module-tunnel-sink server=t-k-debian sink_name=remote latency_msec=130"
+    alias addt="pactl load-module module-tunnel-sink server=t-k-debian sink_name=remote latency_msec=130 && pactl set-default-sink remote 2>/dev/null"
     delt() {
         ids=$(pactl list short modules | awk '/module-tunnel-sink/{print $1}')
         if [ -z "$ids" ]; then
@@ -459,18 +637,6 @@ lst() {
 hl() {
     sed "s/$1/\x1b[1;31m&\x1b[0m/g"
 }
-lockin() {
-    pactl set-sink-volume @DEFAULT_SINK@ 100%
-    playerctl volume 0.8
-    catt -d 192.168.1.4 volume 40
-    node ~/scripts/tuya-control/remote.js bulb-1 on
-    node ~/scripts/tuya-control/remote.js bulb-1 mode scene purplebulb
-    node ~/scripts/tuya-control/remote.js bulb-2 on
-    node ~/scripts/tuya-control/remote.js bulb-2 mode scene purplebulb
-    node ~/scripts/tuya-control/remote.js led on
-    node ~/scripts/tuya-control/remote.js led mode scene purpleled
-    node ~/scripts/tuya-control/remote.js pluh-1 on
-}
 chill() {
     pactl set-sink-volume @DEFAULT_SINK@ 100%
     playerctl volume 0.6
@@ -516,9 +682,6 @@ whois_func() {
     -e "/status:/s/status:\(.*\)/${PURPLE_WHOIS}status:${CYAN_WHOIS}\1${NC_WHOIS}/" \
     -e "/Status:.*Prohibited/I s/Status:\(.* \)\(\([a-zA-Z ]*Prohibited\)\)\(.*\)/${PURPLE_WHOIS}Status:${CYAN_WHOIS}\1${RED_WHOIS}\2 ${NC_WHOIS}\4/" \
     -e "/Status:/s/Status:\(.*\)/${PURPLE_WHOIS}Status:${CYAN_WHOIS}\1${NC_WHOIS}/" \
-    -e "s/Not Disclosed/${RED_WHOIS}&${NC_WHOIS}/g" \
-    -e "s/NOT DISCLOSED!/${RED_WHOIS}&${NC_WHOIS}/g" \
-    -e "s/REDACTED FOR PRIVACY/${RED_WHOIS}&${NC_WHOIS}/g" \
     -e "/Registrar:/,/^$/s/\(name:\)\(.*\)/\1${CYAN_WHOIS}\2${NC_WHOIS}/" \
     -e "/Registrar:/,/^$/s/\(Name:\)\(.*\)/\1${CYAN_WHOIS}\2${NC_WHOIS}/" \
     -e "/Registrant:/,/^$/s/\(name:\)\(.*\)/\1${CYAN_WHOIS}\2${NC_WHOIS}/" \
@@ -537,6 +700,10 @@ whois_func() {
     -e "/country:/s/country:\(.*\)/${PURPLE_WHOIS}country:${CYAN_WHOIS}\1${NC_WHOIS}/" \
     -e "/Country:/s/Country:\(.*\)/${PURPLE_WHOIS}Country:${CYAN_WHOIS}\1${NC_WHOIS}/" \
     -e "/role:/s/role:\(.*\)/${PURPLE_WHOIS}role:${CYAN_WHOIS}\1${NC_WHOIS}/" \
+    -e "s/Not Disclosed/${RED_WHOIS}&${NC_WHOIS}/g" \
+    -e "s/NOT DISCLOSED!/${RED_WHOIS}&${NC_WHOIS}/g" \
+    -e "s/REDACTED FOR PRIVACY/${RED_WHOIS}&${NC_WHOIS}/g" \
+    -e "s/Redacted For Privacy/${RED_WHOIS}&${NC_WHOIS}/g" \
     -e "/domain.............:/s/domain.............:\(.*\)/${PURPLE_WHOIS}domain.............:${CYAN_WHOIS}\1${NC_WHOIS}/" \
     -e "/status.............:/s/status.............:\(.*\)/${PURPLE_WHOIS}status.............:${CYAN_WHOIS}\1${NC_WHOIS}/" \
     -e "/RegistryLock.......:/s/RegistryLock.......:\(.*\)/${PURPLE_WHOIS}RegistryLock.......:${CYAN_WHOIS}\1${NC_WHOIS}/" \
@@ -570,6 +737,8 @@ alias dol="dolphin"
 alias tuya="node ~/scripts/tuya-control/remote.js"
 alias t-nas-sshfs="sshfs t-pirukas.vpn:/mnt/t-nas ~/t-nas"
 alias rnd="openssl rand -base64 12"
+alias la="ls -lah"
+alias max="bash ~/scripts/max/max"
 
 
 # --- NEW SRC ---
@@ -600,32 +769,36 @@ while IFS= read -r line; do
 done <<< "$msg"
 
 c_hostname=$(hostname)
-if [ "$c_hostname" = "t-vps" ]; then
+if [[ "$c_hostname" == "t-vps" ]]; then
     colored_hostname="${ORANGE}$c_hostname${NC}"
-elif [ "$c_hostname" = "t-lap" ]; then
+elif [[ "$c_hostname" == "t-lap" ]]; then
     colored_hostname="${PURPLE}$c_hostname${NC}"
-elif [ "$c_hostname" = "t-k-debian" ]; then
+elif [[ "$c_hostname" == "t-k-debian" ]]; then
     colored_hostname="${CYAN}$c_hostname${NC}"
+elif [[ "$c_hostname" == "t-v-debian" || "$c_hostname" == "t-pm" ]]; then
+    colored_hostname="${GREEN}$c_hostname${NC}"
 else
     colored_hostname="${RED}${c_hostname}${NC}"
 fi
 ### HOSTNAME
 echo -e "  ${BOLD}Hostname:${NC} ${PURPLE}$colored_hostname${NC}"
 ### LOCAL IPv4
-echo -e "  ${BOLD}Local IPv4:${NC} ${PURPLE}$(hostname -I >/dev/null 2>&1 | awk '{print $1}')${NC}"
+echo -e "  ${BOLD}Local IPv4:${NC} ${PURPLE}$(local_ipv4=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '192\.168\.|217\.|10\.224\.' | uniq | xargs); [ -z "$local_ipv4" ] && echo -e ${RED}[ERROR] No IP found.${NC} || echo "$local_ipv4")${NC}"
 ### PUBLIC IPv4
 echo -e "  ${BOLD}Public IPv4:${NC} ${PURPLE}$(IP=$(timeout 0.2 dig +short txt ch whoami.cloudflare @1.1.1.1 2>/dev/null | tr -d '"'); if [ -n "$IP" ]; then echo "$IP"; else curl -s https://icanhazip.com; fi)${NC}"
 ### VPN
-vpn_ip=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^10\.' | head -n1)
-if [[ -n "$vpn_ip" ]]; then
-    echo -e "  ${BOLD}VPN:${NC} ${PURPLE}${vpn_ip}${NC}"
-else
-    echo -e "  ${BOLD}VPN:${NC} ${RED}Disabled${NC}"
+if ls /etc/ 2>/dev/null | grep -i -E "wireguard" >/dev/null ; then
+    vpn_ip=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^10\.182\.' | uniq | xargs)
+    if [[ -n "$vpn_ip" ]]; then
+        echo -e "  ${BOLD}VPN:${NC} ${PURPLE}${vpn_ip}${NC}"
+    else
+        echo -e "  ${BOLD}VPN:${NC} ${RED}Disabled${NC}"
+    fi
 fi
 ### DNS NAMESERVERS
 if [ -f /etc/resolv.conf ]; then
-    echo -e "  ${BOLD}DNS:${NC} ${PURPLE}$(grep nameserver /etc/resolv.conf | awk '{print $2}' | xargs)${NC}"
+    echo -e "  ${BOLD}DNS:${NC} ${PURPLE}$(grep nameserver /etc/resolv.conf | grep -v 'run' | awk '{print $2}' | xargs)${NC}"
 else
-    echo -e "  ${BOLD}DNS:${NC} ${RED}[ERROR]${NC}"
+    echo -e "  ${BOLD}DNS:${NC} ${RED}[ERROR] /etc/resolv.conf file missing.${NC}"
 fi
 echo
