@@ -46,7 +46,7 @@ handle_command() {
     fi
 
     # --- WAKE WORDS ---
-    wake_words="(max|lex|rex)"
+    wake_words="(max|hi max|lex|rex)"
     if [[ "$cmd" =~ ^$wake_words\ .+ ]]; then
         LISTEN_MODE=1
         LAST_COMMAND_TIME=$(date +%s)
@@ -94,15 +94,21 @@ handle_command() {
         # --- SPOTIFY ---
         *"play"*)
             echo -e "${GREEN}[$(date '+%H:%M:%S')] | Playing...${RESET}" && $speak "okay"
-            playerctl play -p spotify
+            playerctl play
+            pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
+            LISTEN_MODE=0
+            return 0
             ;;
         *"pause"*|*"stop"*|*"shut up"*)
             echo -e "${GREEN}[$(date '+%H:%M:%S')] | Stopping...${RESET}" && $speak "okay"
-            playerctl stop -p spotify
+            playerctl stop
+            pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
+            LISTEN_MODE=0
+            return 0
             ;;
         *"skip"*|*"skin"*)
             echo -e "${GREEN}[$(date '+%H:%M:%S')] | Skipping...${RESET}" && $speak "okay"
-            playerctl next -p spotify
+            playerctl next
             ;;
         *"volume up"*)
             echo -e "${GREEN}[$(date '+%H:%M:%S')] | Turning volume up...${RESET}" && $speak "turning volume up"
@@ -122,11 +128,14 @@ handle_command() {
             LISTEN_MODE=0
             return 0
             ;;
-        *"reset"*)
+        *"reset"*|*"recent"*)
             echo -e "${GREEN}[$(date '+%H:%M:%S')] | Resetting volume...${RESET}" && $speak "okay"
             pactl set-sink-volume @DEFAULT_SINK@ 100%
             playerctl volume 0.8 -p spotify
+            catt -d $TV volume 40
             CURRENT_VOLUME=$(pactl get-sink-volume @DEFAULT_SINK@ | awk '{print $5}' | head -n1)
+            LISTEN_MODE=0
+            return 0
             ;;
         "spotify"*)
             cmd="${cmd#* }"
@@ -157,6 +166,9 @@ echo "Heard: $cmd"
             node ~/scripts/tuya-control/remote.js led on
             node ~/scripts/tuya-control/remote.js led mode scene purpleled
             node ~/scripts/tuya-control/remote.js pluh-1 on
+            pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
+            LISTEN_MODE=0
+            return 0
             ;;
         *"lights off"*)
             echo -e "${GREEN}[$(date '+%H:%M:%S')] | Turning off lights...${RESET}" && $speak "okay"
@@ -166,7 +178,10 @@ echo "Heard: $cmd"
             node ~/scripts/tuya-control/remote.js pluh-1 off
             node ~/scripts/tuya-control/remote.js pluh-2 off
             node ~/scripts/tuya-control/remote.js pluh-2 on
-;;
+            pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
+            LISTEN_MODE=0
+            return 0
+            ;;
         *"color red"*)
             echo -e "${GREEN}[$(date '+%H:%M:%S')] | Turning on red mode...${RESET}" && $speak "okay"
             node ~/scripts/tuya-control/remote.js bulb-1 on
@@ -177,10 +192,15 @@ echo "Heard: $cmd"
             node ~/scripts/tuya-control/remote.js led mode color red
             node ~/scripts/tuya-control/remote.js pluh-1 off
             node ~/scripts/tuya-control/remote.js pluh-2 off
+            pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
+            LISTEN_MODE=0
+            return 0
             ;;
         *"movie"*)
             echo -e "${GREEN}[$(date '+%H:%M:%S')] | Turning on movie mode...${RESET}" && $speak "okay"
-            playerctl stop -p spotify
+            pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
+            LISTEN_MODE=0
+            playerctl stop
             node ~/scripts/tuya-control/remote.js bulb-1 on
             node ~/scripts/tuya-control/remote.js bulb-1 mode scene purplebulb
             node ~/scripts/tuya-control/remote.js bulb-2 on
@@ -188,6 +208,7 @@ echo "Heard: $cmd"
             node ~/scripts/tuya-control/remote.js led off
             node ~/scripts/tuya-control/remote.js pluh-1 on
             node ~/scripts/tuya-control/remote.js pluh-2 on
+            return 0
             ;;
         *"orange"*)
             echo -e "${GREEN}[$(date '+%H:%M:%S')] | Turning on orange mode...${RESET}" && $speak "okay"
@@ -249,6 +270,26 @@ echo "Heard: $cmd"
             kill $(cat /tmp/tuya-beat.pid) && rm -rf /tmp/tuya-beat.pid
             ;;
 
+        # --- CLI COMMANDS ---
+        *"lockin"*)
+        pactl set-sink-volume @DEFAULT_SINK@ 100%
+        playerctl volume 0.8
+        catt -d 192.168.1.4 volume 40
+        node ~/scripts/tuya-control/remote.js bulb-1 on
+        node ~/scripts/tuya-control/remote.js bulb-1 mode scene purplebulb
+        node ~/scripts/tuya-control/remote.js bulb-2 on
+        node ~/scripts/tuya-control/remote.js bulb-2 mode scene purplebulb
+        node ~/scripts/tuya-control/remote.js led on
+        node ~/scripts/tuya-control/remote.js led mode scene purpleled
+        node ~/scripts/tuya-control/remote.js pluh-1 on
+            ;;
+        *"sheleft"*)
+        $speak "she left" &
+        node ~/scripts/tuya-control/remote.js led mode scene flash_red_pink
+        node ~/scripts/tuya-control/remote.js bulb-1 mode scene flash_red_pink
+        node ~/scripts/tuya-control/remote.js bulb-2 mode scene flash_red_pink
+        ;;
+
         # --- OTHER ---
         *"kill"*)
             echo -e "${GREEN}[$(timestamp)] | Killing tmux kiosk...${RESET}" && $speak "killing kiosk"
@@ -257,6 +298,7 @@ echo "Heard: $cmd"
             ;;
         *"shut down"*|*"shot down"*|*"shut though"*|*"shot though"*)
             echo -e "${GREEN}[$(timestamp)] | Shutting down...${RESET}" && $speak "shutting down"
+            ssh t-pm bash -ic dispoff
             node ~/scripts/tuya-control/remote.js bulb-1 off
             node ~/scripts/tuya-control/remote.js bulb-2 off
             node ~/scripts/tuya-control/remote.js led off
@@ -266,7 +308,21 @@ echo "Heard: $cmd"
             adb connect $TV
             playerctl stop -p spotify
             nohup bash -c "sleep 3 && adb shell input keyevent KEYCODE_SLEEP && tmux kill-server >/dev/null 2>&1" &
-            #adb shell input text "q"
+            ;;
+        *"sleep"*)
+            echo -e "${GREEN}[$(timestamp)] | Good night...${RESET}" && $speak "good night"
+            ssh t-pm bash -ic dispoff
+            node ~/scripts/tuya-control/remote.js bulb-1 on
+            node ~/scripts/tuya-control/remote.js bulb-1 mode color orangebulb
+            node ~/scripts/tuya-control/remote.js bulb-2 on
+            node ~/scripts/tuya-control/remote.js bulb-2 mode color orangebulb
+            node ~/scripts/tuya-control/remote.js led off
+            node ~/scripts/tuya-control/remote.js pluh-1 off
+            node ~/scripts/tuya-control/remote.js pluh-2 off
+            node ~/scripts/tuya-control/remote.js pluh-2 on
+            adb connect $TV
+            playerctl stop -p spotify
+            nohup bash -c "sleep 3 && adb shell input keyevent KEYCODE_SLEEP && tmux kill-server >/dev/null 2>&1" &
             ;;
         *"wake up")
             echo -e "${GREEN}[$(date '+%H:%M:%S')] | Waking up...${RESET}" && $speak "good moring"
@@ -274,7 +330,7 @@ echo "Heard: $cmd"
             playerctl volume 0.6 -p spotify
             eval "$WAKE_UP_TV"
             ;;
-        *"i'm home"*|*"i'm back"*)
+        *"i'm home"*|*"i'm back"*|*"im home"*)
             echo -e "${GREEN}[$(date '+%H:%M:%S')] | Waking up...${RESET}" && $speak "welcome back"
             pactl set-sink-volume @DEFAULT_SINK@ 100%
             CURRENT_VOLUME=$(pactl get-sink-volume @DEFAULT_SINK@ | awk '{print $5}' | head -n1)
@@ -286,16 +342,19 @@ echo "Heard: $cmd"
             node ~/scripts/tuya-control/remote.js led on
             node ~/scripts/tuya-control/remote.js led mode scene purpleled
             node ~/scripts/tuya-control/remote.js pluh-1 on
-            adb connect $TV
             playerctl play -p spotify
             playerctl next -p spotify
-            adb shell input keyevent KEYCODE_WAKEUP
-            hyprctl dispatch dpms on HDMI-A-1
+            pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
+            LISTEN_MODE=0
+            return 0
             ;;
         *"project off"*|*"project of"*|*"projector off"*|*"projector of"*)
             echo -e "${GREEN}[$(date '+%H:%M:%S')] | Turing off projector...${RESET}" && $speak "okay"
             node ~/scripts/tuya-control/remote.js pluh-2 off
             node ~/scripts/tuya-control/remote.js pluh-2 on
+            pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
+            LISTEN_MODE=0
+            return 0
             ;;
         #"who"*|"what"*|"where"*|"when"*|"why"*|"how"*|"do"*|"does"*|"did"*|"is"*|"are"*|"am"*|"was"*|"were"*|"can"*|"could"*|"would"*|"will"*|"shall"*|"should"*|"has"*|"have"*|"had"*|"may"*|"might"*|"must"*)
         "question"*)
@@ -309,6 +368,17 @@ echo "Heard: $cmd"
             ;;
     esac
 }
+
+
+
+# --- RUN SINGLE COMMAND IF PROVIDED ---
+if [[ -n "$1" ]]; then
+    LISTEN_MODE=1
+    LAST_COMMAND_TIME=$(date +%s)
+    CURRENT_VOLUME=$(pactl get-sink-volume @DEFAULT_SINK@ | awk '{print $5}' | head -n1)
+    handle_command "$*"
+    exit 0
+fi
 
 
 
@@ -326,7 +396,7 @@ while read -r line; do
         done
         if (( matches > 0 )); then
             ((count+=matches))
-            echo -e "${GREEN}MONKEYS: $count${RESET}"
+            echo -e "${GREEN}MONKEYS: $count${RESET}" && $speak "[REMOVED]"
         fi
 
         handle_command "$command"
