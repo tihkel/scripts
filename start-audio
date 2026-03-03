@@ -6,7 +6,7 @@
 SINK_A=$(pactl list short sinks | grep hdmi-surround | awk '{print $2}')
 ## SECONDARY SINK
 SINK_B=$(pactl list short sinks | grep GeneralPlus_USB_Audio_Device | awk '{print $2}')
-DELAY_B=180
+DELAY_B=160
 
 
 # --- LOGGING ---

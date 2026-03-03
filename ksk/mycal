@@ -52,7 +52,7 @@ for i in "${!ICAL_URLS[@]}"; do
     ICAL_URL="${ICAL_URLS[$i]}"
     ICAL_URL="${ICAL_URL/#webcal:\/\//https://}"
     TMPFILE="$TMPDIR/cal_$i.ics"
-    curl -s "$ICAL_URL" -o "$TMPFILE" || continue
+    curl -s -k "$ICAL_URL" -o "$TMPFILE" || continue
 
     awk -v idx="$i" -v maxdays="$max_days" '
 BEGIN {
