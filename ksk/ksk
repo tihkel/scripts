@@ -1,15 +1,5 @@
 #!/bin/bash
 
-# --- START CHECK IF HOME (if not already) ---
-SCRIPT="/home/tihkel/scripts/max/check-if-home"
-
-if ! pgrep -fx "bash $SCRIPT" >/dev/null; then
-    bash "$SCRIPT" >/dev/null 2>&1 &
-fi
-#if ! pgrep -f "bash ~/scripts/max/check-if-home" >/dev/null 2>&1; then
-#    bash ~/scripts/max/check-if-home >/dev/null 2>&1 &
-#fi
-
 # --- KILL LAST AND CREATE NEW SESSION ---
 trap cleanup EXIT
 cleanup() { pkill -P $$; }
@@ -19,7 +9,7 @@ SESSION="kiosk"
 
 # --- VERTICAL LINES ---
 # LINE0
-tmux new-session -d -s "$SESSION" 'watch -ctn1 bash ~/scripts/ksk/c-playing'
+tmux new-session -d -s "$SESSION" 'watch -ctn3 bash ~/scripts/ksk/c-playing'
 pane0=$(tmux list-panes -t "$SESSION" -F "#{pane_id}" | head -n1)
 # LINE1
 tmux select-layout -t "$SESSION" even-vertical >/dev/null 2>&1
@@ -27,7 +17,9 @@ tmux split-window -v -t "$pane0" 'watch -ctn120 bash ~/scripts/ksk/mycal'
 pane1=$(tmux display-message -p "#{pane_id}")
 # LINE2
 tmux select-layout -t "$SESSION" even-vertical >/dev/null 2>&1
-tmux split-window -v -t "$pane1" 'bash ~/scripts/ksk/ssh-auth'
+tmux split-window -v -t "$pane1" 'bash ~/scripts/ksk/bus -b 24 -f Kadaka -a kodu'
+#tmux split-window -v -t "$pane1" 'tail'
+#tmux split-window -v -t "$pane1" 'bash ~/scripts/ksk/ssh-auth'
 pane2=$(tmux display-message -p "#{pane_id}")
 # LINE3
 tmux select-layout -t "$SESSION" even-vertical >/dev/null 2>&1
@@ -35,18 +27,18 @@ tmux split-window -v -t "$pane2" 'bash ~/scripts/ksk/timers'
 pane3=$(tmux display-message -p "#{pane_id}")
 # LINE4
 tmux select-layout -t "$SESSION" even-vertical >/dev/null 2>&1
-tmux split-window -v -t "$pane3" 'cava'
+tmux split-window -v -t "$pane3" 'watch -ctn60 "ssh t-pirukas \"pivpn -c | grep -v '"'"'Connected Clients List'"'"' | grep -v '"'"'Disabled clients'"'"'\""'
 pane4=$(tmux display-message -p "#{pane_id}")
 # SET EQUAL SPACING
 tmux select-layout -t "$SESSION" even-vertical
 # --- HORISONTAL SPLIT PANES ---
 # | FOR LINE2
 # PANE5
-cmd_pane5='watch -ctn1 "w | grep -v tmux | awk '\''NR>1 {printf \"%-7s %-6s %-14s %-6s %-6s %-0s\n\",\$1,\$2,\$3,\$4,\$5,\$8}'\''"'
+cmd_pane5='watch -ctn5 "w | grep -v tmux | awk '\''NR>1 {printf \"%-7s %-6s %-14s %-6s %-6s %-0s\n\",\$1,\$2,\$3,\$4,\$5,\$8}'\''"'
 tmux split-window -h -t "$pane1" "$cmd_pane5"
 pane5=$(tmux display-message -p "#{pane_id}")
 # PANE11
-tmux split-window -h -t "$pane5" 'watch -ctn 10 bash ~/scripts/ksk/gmail && read'
+tmux split-window -h -t "$pane5" 'watch -ctn10 bash ~/scripts/ksk/gmail && read'
 pane11=$(tmux display-message -p "#{pane_id}")
 # PANE10
 #cmd_pane10='watch -ctn1 "w | grep -v tmux | awk '\''NR>1 {printf \"%-7s %-6s %-14s %-6s %-6s %-0s\n\",\$1,\$2,\$3,\$4,\$5,\$8}'\''"'
@@ -72,11 +64,18 @@ pane7=$(tmux display-message -p "#{pane_id}")
       tmux send-keys -t "$pane7" a
       tmux send-keys -t "$pane7" a
       tmux send-keys -t "$pane7" a
+
+      tmux send-keys -t "$pane2" a
+      tmux send-keys -t "$pane2" a
+      tmux send-keys -t "$pane2" a
     done
     sleep 0.5
     tmux send-keys -t "$pane7" q
+
+    tmux send-keys -t "$pane2" q
   done
 ) &
+mapscii_loop_pid=$!
 pane7=$(tmux display-message -p "#{pane_id}")
 # | FOR LINE4
 # PANE8
@@ -138,13 +137,17 @@ tmux resize-pane -t "$pane11" -x 20
 
 # --- POST SETUP ---
 #tmux kill-pane -t "$pane9"
-# FIX/RESPAWN C-PLAYING AND TTY-CLOCK
+## FIX/RESPAWN C-PLAYING AND TTY-CLOCK
 (sleep 1;
-tmux respawn-pane -k -t "$SESSION"."$pane0"
-tmux respawn-pane -k -t "$SESSION"."$pane6"
-tmux respawn-pane -k -t "$SESSION"."$pane8"
-) &
-# FOCUS ON PANE
+tmux respawn-pane -k -t "$SESSION"."$pane0";
+tmux respawn-pane -k -t "$SESSION"."$pane6";
+tmux respawn-pane -k -t "$SESSION"."$pane8") &
+## START 30min COUNTDOWN TO KILL MAPSCII
+(sleep 1800;
+tmux kill-pane -t "$pane2";
+tmux kill-pane -t "$pane7";
+kill "$mapscii_loop_pid") &
+## FOCUS ON PANE
 tmux select-pane -t "$pane8"
 
 # --- START SESSION ---
