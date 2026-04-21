@@ -43,47 +43,20 @@ while true; do
     if is_tv_on; then
         echo "[DEBUG] Device online, was_home=$was_home, offline_since=$offline_since"
 
-        if [[ $was_home -eq 0 ]]; then
+        ## CHECK IF ALREADY MUSIC PLAYING - IF YES: DONT START COMMANDS
+        if [[ $was_home -eq 0 && "$(playerctl -p spotify status 2>/dev/null)" != "Playing" ]]; then
             # IF ITS MORNING THEN RUN MORNING COMMANDS
             if (( current_hour >= 6 && current_hour <= 11 )); then
                 echo "$(date '+%F %T') running MORNING commands..."
                 (
                     # --- MORNING COMMANDS ---
-                    ssh t-pm bash -ic dispon
-                    pactl set-sink-volume @DEFAULT_SINK@ 55%
-                    catt -d $DEVICE_IP volume 40
-                    espeak-ng -v en-gb-x-r "good morning!"
-                    node ~/scripts/tuya-control/remote.js bulb-1 on
-                    node ~/scripts/tuya-control/remote.js bulb-1 mode color orangebulb
-                    node ~/scripts/tuya-control/remote.js bulb-2 on
-                    node ~/scripts/tuya-control/remote.js bulb-2 mode color orangebulb
-                    node ~/scripts/tuya-control/remote.js pluh-1 on
-                    node ~/scripts/tuya-control/remote.js led on
-                    node ~/scripts/tuya-control/remote.js led mode color orangeled
-                    adb shell input keyevent KEYCODE_WAKEUP
-                    playerctl volume 0.8 -p spotify
-                    playerctl play -p spotify
-                    playerctl next -p spotify
+                    bash ~/scripts/max/max "wake up"
                 ) &
             else
                 echo "$(date '+%F %T') running WELCOME BACK commands..."
                 (
                     # --- WELCOME BACK COMMANDS ---
-                    ssh t-pm bash -ic dispon
-                    pactl set-sink-volume @DEFAULT_SINK@ 100%
-                    catt -d $DEVICE_IP volume 40
-                    espeak-ng -v en-gb-x-r "welcome back!"
-                    node ~/scripts/tuya-control/remote.js bulb-1 on
-                    node ~/scripts/tuya-control/remote.js bulb-1 mode scene purplebulb
-                    node ~/scripts/tuya-control/remote.js bulb-2 on
-                    node ~/scripts/tuya-control/remote.js bulb-2 mode scene purplebulb
-                    node ~/scripts/tuya-control/remote.js led on
-                    node ~/scripts/tuya-control/remote.js led mode scene purpleled
-                    node ~/scripts/tuya-control/remote.js pluh-1 on
-                    adb shell input keyevent KEYCODE_WAKEUP
-                    playerctl volume 0.8 -p spotify
-                    playerctl play -p spotify
-                    playerctl next -p spotify
+                    bash ~/scripts/max/max "im home"
                 ) &
             fi
             was_home=1
