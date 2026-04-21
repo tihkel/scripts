@@ -5,7 +5,7 @@ input="$1"
 domain=${input#http*://}; domain=${domain%%/*}; domain=${domain,,}
 # --- USAGE ---
 if [ -z "$domain" ]; then
-    echo "Usage: $0 <domain>"
+    echo "ERROR: Domain missing. Usage: ns <domain>"
     exit 1
 fi
 clear
@@ -59,7 +59,7 @@ declare -A DKIM_HOSTS=(
     ["MAILCHIMP_mte1"]="mte1._domainkey"
     ["MAILCHIMP_mte2"]="mte2._domainkey"
     ["EXCELLENT"]="smtp4._domainkey"
-    ["AMAZONSES"]="resend._domainkey"
+    ["RESEND/AMAZONSES"]="resend._domainkey"
     ["ZENDESK_1"]="zendesk1._domainkey"
     ["ZENDESK_2"]="zendesk2._domainkey"
     ["MANDRILL"]="mandrill._domainkey"
@@ -209,7 +209,8 @@ if [ -n "$protocol" ]; then
             break
         fi
     done
-        if ! $found; then
+#        if [[ "$found" != true && "$extra_info" =~ BLANK\ PAGE ]]; then
+        if ! $found && ! [[ "$extra_info" =~ "BLANK PAGE" ]]; then
             echo -e "${YELLOW}Unknown CMS${GRAY}"
             score=0
             score_goal=30
@@ -238,9 +239,6 @@ if [ -n "$protocol" ]; then
                 echo -e "${RED}not self-made?: ($score/$score_goal)${GRAY}"
             fi
         fi
-#        if ! $found; then
-#            echo -e "${YELLOW}Unknown CMS${GRAY}"
-#        fi
         ## SERVER INFO
         server=$(echo "$headers" | grep -i "^Server:" | cut -d' ' -f2-)
         [ -n "$server" ] && echo -e "${GRAY}Server: $server${NC}"
@@ -372,6 +370,7 @@ if [[ " $@ " =~ " -f " ]]; then
 ## WORDPRESS
 if [[ "$cms" == "WordPress" ]]; then
     site_and_home_url=$(timeout 3 curl -sL "$domain/wp-json" | jq '{url,home}')
+    wp_users=$(curl -sL "$domain/wp-json/wp/v2/users" | jq '.[] | {id, name}')
 fi
 echo -e "${PURPLE} CMS SCAN ${NC}$([ -n "$site_and_home_url" ] && echo -e ${GREEN}+${GRAY} || echo -e ${RED}-${GRAY})"
 echo -e "${PURPLE}──────────${GRAY}"
@@ -381,17 +380,32 @@ if [[ "$cms" == "WordPress" ]]; then
     else
         echo -e "${RED}Site and Home URL's not found."
     fi
+    if [[ -n "$wp_users" ]]; then
+        echo -e "$wp_users"
+    else
+        echo -e "${RED}No users found."
+    fi
     echo
 fi
 
 
 # --- SUBDOMAINS ---
-subdomains=$(timeout 3 curl -s "https://crt.sh/?q=%25.$domain&output=json" | \
-    grep -oP '"name_value":"\K[^"]+' | \
-    sed 's/\\n/\n/g' | \
-    sed 's/\*\.//g' | \
-    sort -u | \
-    grep "\.$domain$")
+# crt.sh
+ct=$(timeout 5 curl -s "https://crt.sh/?q=%25.$domain&output=json" 2>/dev/null | \
+    grep -oP '"name_value":"\K[^"]+' | sed 's/\\n/\n/g;s/\*\.//g')
+# HackerTarget
+ht=$(timeout 5 curl -s "https://api.hackertarget.com/hostsearch/?q=$domain" 2>/dev/null | \
+    cut -d',' -f1)
+# RapidDNS (no key, good coverage)
+rd=$(timeout 5 curl -s "https://rapiddns.io/subdomain/$domain?full=1&down=1" 2>/dev/null | \
+    grep -oP '(?<=<td>)[a-z0-9._-]+\.'$domain'(?=</td>)')
+subdomains=$(echo -e "$ct\n$ht\n$rd" | sed 's/\*\.//g' | sort -u | grep "\.$domain$")
+#subdomains=$(timeout 3 curl -s "https://crt.sh/?q=%25.$domain&output=json" | \
+#    grep -oP '"name_value":"\K[^"]+' | \
+#    sed 's/\\n/\n/g' | \
+#    sed 's/\*\.//g' | \
+#    sort -u | \
+#    grep "\.$domain$")
 echo -e "${PURPLE} SUBDOMAINS ${NC}$([ -n "$subdomains" ] && echo -e ${GREEN}+${GRAY} || echo -e ${RED}-${GRAY})"
 echo -e "${PURPLE}────────────${GRAY}"
 if [ -n "$subdomains" ]; then
@@ -460,7 +474,8 @@ fi
 # --- PORTS ---
 echo -e "${PURPLE} PORTS ${NC}"
 echo -e "${PURPLE}───────${GRAY}"
-timeout 10 nmap -sV "$domain" -v | grep -oP '\d+(?=/tcp)'
+timeout 10 nmap -sV "$domain" -v | awk '/^[0-9]+\/tcp/ {split($1,a,"/"); print a[1] " - " $3}'
+#timeout 10 nmap -sV "$domain" -v | grep -oP '\d+(?=/tcp)'
 echo
 
 
