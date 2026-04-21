@@ -9,10 +9,12 @@ kodu_lat=59.40958312854771
 kodu_lon=24.67482446250583
 # --- END OF CONFIG ---
 
+
 # --- DEFAULTS ---
 bus_number=""
 final_stop=""
 address_name=""
+
 
 # --- PARAMS ---
 while getopts "b:f:a:" opt; do
@@ -23,6 +25,7 @@ while getopts "b:f:a:" opt; do
     *) echo "Usage: $0 -b bussinumber -f \"lõpp-peatus\" -a [zone|kodu]"; exit 1 ;;
   esac
 done
+
 
 # --- CHECK REQUIRED PARAMS ---
 if [[ -z "$bus_number" || -z "$final_stop" || -z "$address_name" ]]; then
@@ -46,26 +49,42 @@ case "$address_name" in
     ;;
 esac
 
+
 # --- MIDDLE RED DOT ---
 (
   while true; do
-    row=$(( $(tput lines) / 2 ))
-    col=$(( $(tput cols) / 2 ))
+    row=$(( $(tput lines) / 2 - 1 ))
+    col=$(( $(tput cols) / 2 - 1 ))
     tput cup "$row" "$col"
-    echo -ne "\e[1;31m⬤\e[0m"
+    echo -ne "\e[1;31m●\e[0m"
+    #echo -ne "\e[1;31m•\e[0m"
     sleep 0.5
   done
 ) &
 dot_pid=$!
 
+
+# --- TOP LEFT LABEL ---
+(
+  while true; do
+    tput cup 0 0
+    echo -ne "\e[1;36mBus geo loc for $bus_number -> $final_stop\e[0m"
+    sleep 1
+  done
+) &
+label_pid=$!
+
+
 # --- CLEANUP ---
 cleanup() {
     kill "$dot_pid" 2>/dev/null
+    kill "$label_pid" 2>/dev/null
     tput sgr0
     echo
     exit
 }
 trap cleanup INT TERM
+
 
 # --- MAIN LOOP ---
 while true; do
@@ -102,8 +121,11 @@ while true; do
     if [[ -n "$raw_lon" && -n "$raw_lat" ]]; then
         lon=$(awk "BEGIN {printf \"%.6f\", $raw_lon/1000000}")
         lat=$(awk "BEGIN {printf \"%.6f\", $raw_lat/1000000}")
-        node ~/mapscii/main.js -z 10 -g "${lat},${lon}" &
+        node ~/mapscii/main.js -z 10 --lat "${lat}" --lon "${lon}" &
         mapscii_pid=$!
+        sleep 0.3  # wait for mapscii to render first
+        tput cup 0 0
+        echo -ne "\e[1;36mBus geo loc for $bus_number\e[0m"
         wait $mapscii_pid
     else
         echo "Ühtegi sobivat bussi ei leitud: $bus_number -> $final_stop"
