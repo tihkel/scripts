@@ -1,4 +1,0 @@
-#!/bin/bash
-
-sudo grub-reboot 0
-sudo reboot -f
