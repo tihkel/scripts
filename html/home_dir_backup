@@ -1,0 +1,45 @@
+#!/bin/bash
+
+
+# --- CONF ---
+REMOTE_HOST="tihkel@t-pirukas"
+REMOTE_DIR="t-nas/backups"
+MAX_BACKUPS=2
+EXCLUDE_DIRS=("$USER/backups" "$USER/vms" "$USER/t-nas")
+FILENAME="$(date +%F_%H-%M-%S)_home_dir_backup_for_$USER@$(hostname).tar.gz"
+## OPTIONAL
+LOCAL_BACKUPS_DIR="$HOME/backups"
+
+
+# --- MANAGE EXCLUDE DIRS ---
+EXCLUDE_ARGS=()
+for DIR in "${EXCLUDE_DIRS[@]}"; do
+    EXCLUDE_ARGS+=(--exclude="$DIR")
+done
+
+
+# --- MANAGE LOCAL BACKUPS ---
+if [[ "$(hostname)" == "t-vps" ]]; then
+    mkdir -p "$LOCAL_BACKUPS_DIR"
+
+    BACKUP_COUNT=$(ls -1 $LOCAL_BACKUPS_DIR/*_for_$USER@$(hostname).tar.gz 2>/dev/null | wc -l)
+    TO_DELETE=$((BACKUP_COUNT - MAX_BACKUPS + 1))
+    if [ "$TO_DELETE" -gt 0 ]; then
+        ls -1t $LOCAL_BACKUPS_DIR/*_for_$USER@$(hostname).tar.gz | tail -n "$TO_DELETE" | xargs -r rm -f
+    fi
+
+    sudo tar "${EXCLUDE_ARGS[@]}" -czf - -C /home "$USER" | cat > "$LOCAL_BACKUPS_DIR/$FILENAME"
+    exit 0
+fi
+
+
+# --- DELETE BACKUPS OVER LIMIT ---
+BACKUP_COUNT=$(ssh -n -o ConnectTimeout=5 $REMOTE_HOST "ls -1 $REMOTE_DIR/*_for_$USER@$(hostname).tar.gz 2>/dev/null | wc -l")
+TO_DELETE=$((BACKUP_COUNT - MAX_BACKUPS + 1))
+if [ "$TO_DELETE" -gt 0 ]; then
+    ssh -n -o ConnectTimeout=5 $REMOTE_HOST "ls -1t $REMOTE_DIR/*_for_$USER@$(hostname).tar.gz | tail -n $TO_DELETE | xargs -r rm -f"
+fi
+
+
+# --- CREATE AND SEND BACKUP ---
+sudo tar "${EXCLUDE_ARGS[@]}" -czf - -C /home "$USER" | ssh -o ConnectTimeout=5 $REMOTE_HOST "cat > $REMOTE_DIR/$FILENAME"
