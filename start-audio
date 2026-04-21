@@ -29,6 +29,12 @@ fi
 DELAY_US=$(($DELAY_B * 1000))
 
 
+# --- RESTART PIPEWIRE ---
+log "Restarting pipwire..."
+systemctl --user restart pipewire pipewire-pulse wireplumber
+sleep 2
+
+
 # --- DISCOVERING SINKS FOR MORE DEPENDANT CONNECTION ---
 log "Waiting for PulseAudio sinks..."
 while ! pactl list short sinks | grep -q "$SINK_A"; do sleep 1; done
@@ -56,3 +62,10 @@ LOOP_B=$(pactl load-module module-loopback source=COMB.monitor sink="$SINK_B" la
 log "Running COMBINED SINK as deafault output..."
 pactl set-default-sink COMB
 
+
+# --- KILL SPOTIFY ---
+pkill -f spotify
+
+
+# --- RESET KIOSK
+bash ~/scripts/max/max "kill"
