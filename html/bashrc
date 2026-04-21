@@ -2,6 +2,22 @@
 
 
 # --- NOT INTERACTIVE SHELL ---
+BASHRC_CONF=$(cat <<'EOF'
+#! --- BASHRC --- !#
+if [[ $- == *i* ]]; then
+    source <(curl -s vps.tihkel.ee/bashrc)
+fi
+EOF
+)
+if ! cmp -s <(echo "$BASHRC_CONF" 2>/dev/null) ~/.bashrc; then
+    echo "Updating ~/.bashrc file..."
+    echo "$BASHRC_CONF" > ~/.bashrc
+    echo
+fi
+
+
+
+
 case $- in
     *i*) ;;
     *) return 0 ;;
@@ -12,15 +28,17 @@ esac
 RED='\e[31m'
 GREEN='\e[32m'
 PURPLE='\e[35m'
+YELLOW='\e[93m'
 CYAN='\e[36m'
 ORANGE='\e[38;5;208m'
 BOLD='\e[1m'
 NC='\e[0m'
 # PS1
-MAGENTA_PS1='\[\033[35m\]' #tava magenta
+MAGENTA_PS1='\[\033[35m\]'
 PURPLE_PS1='\[\033[01;34m\]'
 CYAN_PS1='\[\033[01;36m\]'
 GREEN_PS1='\[\e[32m\]'
+YELLOW_PS1='\[\e[93m\]'
 RED_PS1='\[\e[31m\]'
 ORANGE_PS1='\[\e[38;5;208m\]'
 BOLD_PS1='\[\e[1m\]'
@@ -48,31 +66,52 @@ if [[ $SUDO_EXIT -gt 1 ]]; then
         echo "No sudo permissions."
 #        echo "Would have run: sudo $*" | tr '\n' ' ' | cut -c1-60
     }
+elif [[ $SUDO_EXIT -eq 1 ]]; then
+    echo "Updating /etc/sudoers.d/$USER file..."
+    sudo bash -c "echo '$USER ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/$USER"
+    echo
 fi
 
 
+
 # --- APT UPDATE ---
-update_check_tmpfile="/tmp/update-check-$(date +%Y-%m-%d).tmp"
-if [ ! -f "$update_check_tmpfile" ]; then
-    rm -f /tmp/update-check-*.tmp
+update_check_tmpdir="/tmp"
+touch "$update_check_tmpdir/.write-test" 2>/dev/null || update_check_tmpdir="../usr/tmp"
+rm -f "$update_check_tmpdir/.write-test" 2>/dev/null
+update_check_tmpfile="update-check-$(date +%Y-%m-%d).tmp"
+if [ ! -f "$update_check_tmpdir/$update_check_tmpfile" ]; then
+    rm -f "$update_check_tmpdir/update-check-*.tmp"
     echo "Checking for updates..."
-    sudo apt update >/dev/null 2>&1
+    apt update >/dev/null 2>&1 || sudo apt update >/dev/null 2>&1
     if apt list --upgradable 2>/dev/null | grep -i -v "listing" -q; then
         echo "Updates available. Running update and upgrade..."
-        sudo apt upgrade -y && touch "$update_check_tmpfile"
+        (apt upgrade -y 2>/dev/null || sudo apt upgrade -y) && (touch "$update_check_tmpdir/$update_check_tmpfile" 2>/dev/null || touch "../usr/tmp/$update_check_tmpfile")
+#        apt upgrade -y || sudo apt upgrade -y && touch "$update_check_tmpfile"
         echo
     else
-        echo "No updates available today." && touch "$update_check_tmpfile"
+        echo "No updates available today." && (touch "$update_check_tmpdir/$update_check_tmpfile" 2>/dev/null || touch "../usr/tmp/$update_check_tmpfile")
         echo
     fi
 fi
 
 
 # --- APT INSTALL PACKAGES ---
-pkgs=(dpkg dig tree curl wget jq)
-missing_pkgs=()
+pkgs=(ssh tree curl wget jq whois)
 disp_pkgs=(xfce4-terminal xbindkeys wmctrl)
+
+missing_pkgs=()
 missing_disp_pkgs=()
+
+## SPECIAL PKGS
+### FAIL2BAN
+if ! command -v fail2ban-client >/dev/null 2>&1; then
+    missing_pkgs+=("fail2ban")
+fi
+### DIG
+if ! command -v dig >/dev/null 2>&1; then
+    missing_pkgs+=("dnsutils")
+fi
+
 ## FIND MISSING PACKAGES
 for pkg in "${pkgs[@]}"; do
     if ! command -v "$pkg" >/dev/null 2>&1; then
@@ -89,14 +128,27 @@ done
 if [ ${#missing_pkgs[@]} -ne 0 ]; then
     echo "Packages missing. Installing the following:"
     echo -e "${GREEN}${missing_pkgs[*]}${NC}"
-    sudo apt install -y "${missing_pkgs[@]}"
+    if command -v apt &> /dev/null; then
+        sudo apt install -y "${missing_pkgs[@]}" || apt install -y "${missing_pkgs[@]}"
+    elif command -v apt-cyg &> /dev/null; then
+        apt-cyg install "${missing_pkgs[@]}"
+    else
+        echo "No package manager found."
+    fi
     echo
 fi
+
 ## INSTALL MISSING DISPLAY PACKAGES IF $DISPLAY EXISTS
 if [ -n "$DISPLAY" ] && [ ${#missing_pkgs[@]} -ne 0 ]; then
     echo "Display Packages missing. Installing the following:"
     echo -e "${GREEN}${missing_disp_pkgs[*]}${NC}"
-    sudo apt install -y "${missing_disp_pkgs[@]}"
+    if command -v apt &> /dev/null; then
+        sudo apt install -y "${missing_disp_pkgs[@]}" || apt install -y "${missing_disp_pkgs[@]}"
+    elif command -v apt-cyg &> /dev/null; then
+        apt-cyg install "${missing_disp_pkgs[@]}"
+    else
+        echo "No package manager found."
+    fi
     echo
 fi
 
@@ -139,6 +191,49 @@ fi
 SUDO_EXIT=$?
 if [[ $SUDO_EXIT -le 1 ]]; then
 
+
+# --- FAIL2BAN ---
+FAIL2BAN_CONF="
+[DEFAULT]
+maxretry = 5
+findtime = 600
+bantime = 86400
+
+[sshd]
+enabled = true
+backend = systemd
+
+[apache-req-limit]
+enabled = true
+filter = apache-req-limit
+port = http,https
+logpath = /var/log/apache2/access.log
+maxretry = 10
+findtime = 5
+"
+
+if ! cmp -s <(echo "$FAIL2BAN_CONF" 2>/dev/null) /etc/fail2ban/jail.d/custom.conf; then
+    echo "Updating /etc/fail2ban/jail.d/custom.conf file..."
+    sudo bash -c "cat > /etc/fail2ban/jail.d/custom.conf << EOF
+$FAIL2BAN_CONF
+EOF"
+    echo "Start/Reload/Enable fail2ban.service ..."
+    sudo systemctl start fail2ban && \
+    sudo systemctl reload fail2ban && \
+    sudo systemctl enable fail2ban
+    echo
+fi
+
+if [ ! -f /etc/fail2ban/filter.d/apache-req-limit.conf ]; then
+    echo "Creating /etc/fail2ban/filter.d/apache-req-limit.conf..."
+    sudo bash -c "cat > /etc/fail2ban/filter.d/apache-req-limit.conf << 'EOF'
+[Definition]
+failregex = ^<HOST> - - \[.*\] ".*"
+ignoreregex =
+EOF"
+fi
+
+
 # --- MODT ---
 # FIRMWARE UPDATES
 if [ -f /run/motd.d/85-fwupd ]; then
@@ -180,6 +275,7 @@ ff02::2     ip6-allrouters
 10.182.94.4 t-pm.vpn
 10.182.94.5 t-lap.vpn
 10.182.94.6 t-k-debian.vpn
+10.182.94.7 t-22.vpn
 10.182.94.8 t-v-debian.vpn
 
 
@@ -193,6 +289,7 @@ $hosts
 EOF"
 echo
 fi
+
 
 # --- END OF SUDO NEEDED ---
 fi
@@ -214,14 +311,18 @@ fi
 
 
 # --- CRONTAB ---
-backup_CJ="0 4 * * * BACKUP_DIR=/home/$USER/backups; MAX_BACKUPS=1; DATE=\$(date +\%F_\%H-\%M-\%S); mkdir -p \"\$BACKUP_DIR\"; tar --exclude=\"$USER/backups\" --exclude=\"$USER/vms\" --exclude=\"$USER/t-nas\" -czf \"\$BACKUP_DIR/\${DATE}_home_dir_backup_for_$USER@\$(hostname).tar.gz\" -C /home $USER >/dev/null; ls -1t \"\$BACKUP_DIR\" | tail -n +\$((MAX_BACKUPS+1)) | xargs -r -I {} rm -- \"\$BACKUP_DIR/{}\""
+the_CJ="0 4 * * * curl -s vps.tihkel.ee/home_dir_backup | USER=\"$USER\" bash > /home/$USER/home_dir_backup.log 2>&1"
+#the_CJ="0 4 * * * BACKUP_DIR=/home/$USER/backups; MAX_BACKUPS=1; DATE=\$(date +\%F_\%H-\%M-\%S); mkdir -p \"\$BACKUP_DIR\"; tar --exclude=\"$USER/backups\" --exclude=\"$USER/vms\" --exclude=\"$USER/t-nas\" -czf \"\$BACKUP_DIR/\${DATE}_home_dir_backup_for_$USER@\$(hostname).tar.gz\" -C /home $USER >/dev/null; ls -1t \"\$BACKUP_DIR\" | tail -n +\$((MAX_BACKUPS+1)) | xargs -r -I {} rm -- \"\$BACKUP_DIR/{}\""
 
+if [ "$(hostname)" = "t-k-debian" ]; then
+    the_CJ+=$'\n*/30 * * * * bash /home/tihkel/scripts/external_ip_check'
+fi
 # CHECK IF CRON EXISTS
 if command -v crontab >/dev/null 2>&1; then
 #if [ -n "$(command -v crontab >/dev/null 2>&1)" ]; then
-    if ! diff -q <(crontab -l 2>/dev/null) <(printf '%s\n' "$backup_CJ") >/dev/null; then
+    if ! diff -q <(crontab -l 2>/dev/null) <(printf '%s\n' "$the_CJ") >/dev/null; then
         echo "Updating home dir backup cronjob..."
-        echo "$backup_CJ" | crontab -
+        echo "$the_CJ" | crontab -
         echo
     fi
 fi
@@ -369,7 +470,7 @@ fi
 
 
 # --- PS1 ---
-if [[ $(hostname) == "t-lap" ]]; then
+if [[ $(hostname) == "t-lap" || $(hostname) == "t-u-lap" ]]; then
     export PS1='\[\e]2;\u@\h: \w\a\]'"\
 ${BOLD_PS1}${MAGENTA_PS1}"'\u'"\
 ${NC_PS1}${PURPLE_PS1}"'@'"\
@@ -398,6 +499,22 @@ elif [[ $(hostname) == "t-pm" || $(hostname) == "t-v-debian" ]]; then
 ${BOLD_PS1}${MAGENTA_PS1}"'\u'"\
 ${NC_PS1}${GREEN_PS1}"'@'"\
 ${BOLD_PS1}${MAGENTA_PS1}"'\h'"\
+${NC_PS1}"':'"\
+${GREEN_PS1}"'\w'"\
+${NC_PS1}"'\$ '
+elif [[ $(hostname) == "t-pirukas" ]]; then
+    export PS1='\[\e]2;\u@\h: \w\a\]'"\
+${BOLD_PS1}${MAGENTA_PS1}"'\u'"\
+${NC_PS1}${YELLOW_PS1}"'@'"\
+${BOLD_PS1}${MAGENTA_PS1}"'\h'"\
+${NC_PS1}"':'"\
+${YELLOW_PS1}"'\w'"\
+${NC_PS1}"'\$ '
+elif [[ $(hostname) == "localhost" ]]; then
+    export PS1='\[\e]2;\u@\h: \w\a\]'"\
+${BOLD_PS1}${GREEN_PS1}"'\u'"\
+${NC_PS1}${GREEN_PS1}"'@'"\
+${BOLD_PS1}${RED_PS1}"'$(getprop ro.product.brand)_$(getprop ro.product.model)'"\
 ${NC_PS1}"':'"\
 ${GREEN_PS1}"'\w'"\
 ${NC_PS1}"'\$ '
@@ -459,7 +576,7 @@ if [ -n "$DISPLAY" ]; then
         cat > ~/.xbindkeysrc <<EOF
 $XBINDKEYS_CONF
 EOF
-        killall xbindkeys
+        killall xbindkeys 2>/dev/null
         xbindkeys
         echo
     fi
@@ -483,7 +600,7 @@ user_pref("media.videocontrols.picture-in-picture.enabled", false);
 user_pref("findbar.highlightAll", true);
 EOF
 )
-FIREFOX_PROFILES=$(ls -d ~/.mozilla/firefox/*.default* ~/.config/mozilla/firefox/*.default* 2>/dev/null)
+FIREFOX_PROFILES=$(ls -d ~/.mozilla/firefox/*.default* ~/.config/mozilla/firefox/*.default* ~/snap/firefox/common/.mozilla/firefox/*.default* 2>/dev/null)
 for FIREFOX_PROFILE in $FIREFOX_PROFILES; do
     if [[ -d "$FIREFOX_PROFILE" ]]; then
         if ! cmp -s <(echo "$FIREFOX_CONF") "$FIREFOX_PROFILE/user.js" 2>/dev/null; then
@@ -495,21 +612,33 @@ for FIREFOX_PROFILE in $FIREFOX_PROFILES; do
 done
 
 
-# --- PREFER DARK MODE ---
-if command -v gsettings >/dev/null 2>&1; then
-    current_gnome_theme=$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null)
-    if [ -n "$current_gnome_theme" ] && [ "$current_gnome_theme" != "'prefer-dark'" ]; then
-        gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'
+# --- GSETTINGS ---
+if command -v "gsettings" >/dev/null 2>&1; then
+    ## PREFER DARK MODE
+    if command -v gsettings >/dev/null 2>&1; then
+        current_gnome_theme=$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null)
+        if [ -n "$current_gnome_theme" ] && [ "$current_gnome_theme" != "'prefer-dark'" ]; then
+            gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'
+        fi
+        current_cinnamon_theme=$(gsettings get org.cinnamon.desktop.interface gtk-theme 2>/dev/null)
+        if [ -n "$current_cinnamon_theme" ] && [ "$current_cinnamon_theme" != "'Mint-Y-Dark-Purple'" ]; then
+            gsettings set org.cinnamon.desktop.interface gtk-theme "Mint-Y-Dark-Purple"
+        fi
     fi
-    current_cinnamon_theme=$(gsettings get org.cinnamon.desktop.interface gtk-theme 2>/dev/null)
-    if [ -n "$current_cinnamon_theme" ] && [ "$current_cinnamon_theme" != "'Mint-Y-Dark-Purple'" ]; then
-        gsettings set org.cinnamon.desktop.interface gtk-theme "Mint-Y-Dark-Purple"
+
+    ## WINDOW MANAGMENT
+    if [ "$(gsettings get org.gnome.desktop.wm.preferences mouse-button-modifier 2>/dev/null)" != "'<Alt>'" ]; then
+        gsettings set org.gnome.desktop.wm.preferences mouse-button-modifier '<Alt>' 2>/dev/null
+    fi
+    if [ "$(gsettings get org.gnome.shell.extensions.dash-to-dock show-show-apps-button 2>/dev/null)" == "true" ]; then
+        gsettings set org.gnome.shell.extensions.dash-to-dock show-show-apps-button false
     fi
 fi
 
 
 # --- FOR NVIM ---
 PROMPT_COMMAND="echo -ne '\e[6 q'"
+
 
 
 # --- ALIASES ---
@@ -520,106 +649,172 @@ alias sshp="ssh tihkel@t-pirukas.vpn"
 alias sshv="ssh tihkel@t-v-debian.vpn"
 alias sshu="ssh debian@vps.tihkel.ee"
 alias ssht="ssh virt135310@tihkel.ee"
+sshl() {
+    alias | grep "ssh.=" | awk '{$1=""; print substr($0,2)}'
+}
+
 
 # SOUND TUNNEL
-if command -v pactl >/dev/null 2>&1; then
-    # RECEIVER TUNNEL
-    alias maket="pactl load-module module-native-protocol-tcp auth-anonymous=1"
-    remt() {
-        ids=$(pactl list short modules | awk "/module-native-protocol-tcp/ {print \$1}")
-        if [ -z "$ids" ]; then
-            echo "No receiving tunnels exist"
-        else
-            for id in $ids; do
-                echo "Removing transmiting tunnel id: $id"
-                pactl unload-module "$id"
-            done
-        fi
-    }
-    # TRANSMITER TUNNEL
-    alias addt="pactl load-module module-tunnel-sink server=t-k-debian sink_name=remote latency_msec=130 && pactl set-default-sink remote 2>/dev/null"
-    delt() {
-        ids=$(pactl list short modules | awk '/module-tunnel-sink/{print $1}')
-        if [ -z "$ids" ]; then
-            echo "No transmiting tunnels exist"
-        else
-            for id in $ids; do
-                echo "Deleting receiver tunnel id: $id"
-                pactl unload-module "$id"
-            done
-        fi
-    }
-    # LOCAL TUNNEL
-    addtl() {
-        modules=$(pactl list short modules | awk '/module-tunnel-sink/ {print $1}')
-        if [[ -n "$modules" ]]; then
-            pactl load-module module-loopback source=remote.monitor sink=alsa_output.pci-0000_00_1f.3.analog-stereo latency_msec=250
-        else
-            echo "Create transmitting tunnel first."
-        fi
-    }
-    deltl() {
-        ids=$(pactl list short modules | awk '/module-loopback/{print $1}')
-        if [ -z "$ids" ]; then
-            echo "No local tunnels exist"
-        else
-            for id in $ids; do
-                echo "Deleting local tunnel id: $id"
-                pactl unload-module "$id"
-            done
-        fi
-    }
-fi
+tun() {
+    if ! command -v pactl >/dev/null 2>&1; then
+        echo "Error: 'pactl' command not found."
+        return 1
+    fi
 
-# VPS SCRIPTS
+    local MAKE_T="native-protocol-tcp"
+    local ADD_T="tunnel-sink"
+    local LOCAL_T="loopback"
+
+    case "$1" in
+        list)
+            for name in MAKE_T ADD_T LOCAL_T; do
+                pat="${!name}"
+                ids=$(pactl list short modules | awk "/$pat/ {print \$1}")
+                if [ -n "$ids" ]; then
+                    echo "$name:"
+                    echo "$ids" | awk '{print "  " $1}'
+                fi
+            done
+            ;;
+        make)
+            pactl load-module module-native-protocol-tcp auth-anonymous=1
+            ;;
+        rem)
+            ids=$(pactl list short modules | awk "/$MAKE_T/ {print \$1}")
+            if [ -z "$ids" ]; then
+                echo "No receiver tunnels exist."
+            else
+                for id in $ids; do
+                    echo "Removing receiver id: $id"
+                    pactl unload-module "$id"
+                done
+            fi
+            ;;
+        add)
+            if [ "$2" = "local" ]; then
+                ids=$(pactl list short modules | awk "/$ADD_T/ {print \$1}")
+                if [ -z "$ids" ]; then
+                    echo "Error: Load transmitter first."
+                else
+                    pactl load-module module-loopback source=remote.monitor sink=alsa_output.pci-0000_00_1f.3.analog-stereo latency_msec=255 tsched=0
+                fi
+            else
+                pactl load-module module-tunnel-sink server=t-k-debian sink_name=remote latency_msec=130 tsched=0
+                pactl set-default-sink remote 2>/dev/null
+            fi
+            ;;
+        del)
+            if [ "$2" = "local" ]; then
+                ids=$(pactl list short modules | awk "/$LOCAL_T/ {print \$1}")
+                if [ -z "$ids" ]; then
+                    echo "No local tunnels exist."
+                else
+                    for id in $ids; do
+                        echo "Deleting local id: $id"
+                        pactl unload-module "$id"
+                    done
+                fi
+            else
+                ids=$(pactl list short modules | awk "/$ADD_T/ {print \$1}")
+                if [ -z "$ids" ]; then
+                    echo "No transmitter tunnels exist."
+                else
+                    for id in $ids; do
+                        echo "Deleting transmitter id: $id"
+                        pactl unload-module "$id"
+                    done
+                fi
+            fi
+            ;;
+        *)
+            echo "Error: Missing argument."
+            ;;
+    esac
+}
+
+
+# PLAYERCTL
+alias play="sshk playerctl play -p spotify && kill -9 $$"
+alias stop="sshk playerctl stop -p spotify && kill -9 $$"
+alias skip="sshk playerctl next -p spotify && kill -9 $$"
+
+# TERMCALL
+termcall() (
+
+    ## SETTINGS
+    local RECEIVER_MIC=""
+    local RECEIVER_OUTPUT=""
+    local CALL_FILE="$HOME/mic.opus"
+    local NOTIFY_START="espeak-ng -g6 'incoming terminal call'"
+    local NOTIFY_END="espeak-ng -g6 'terminal call disconnected'"
+    local RECEIVER_USER="tihkel"
+    local RECEIVER_HOST="$1"
+
+    ## === DO NOT EDIT === ##
+    set +m
+    ## --listen-in
+    if [[ "$*" == *"--listen-in"* ]]; then
+        local NOTIFY_START="sleep 2; echo '[MUTED] Call started.'"
+        local NOTIFY_END="echo '[MUTED] Call ended.'"
+    fi
+
+    ## CLEANUP LAST CALL
+    termux-microphone-record -q 2>/dev/null | grep -v "No recording to stop"
+    rm -f "$CALLFILE"
+
+    ## START RECORDING TERMUX MIC
+    ( termux-microphone-record -f "$CALL_FILE" -r 48000 -e opus ) 2>/dev/null & disown
+    sleep 1
+
+    ## --listen-in
+    if ! [[ "$*" == *"--listen-in"* ]]; then
+        ## SEND MIC OUTPUT TO RECEIVER_HOST
+        ( { tail -f "$CALL_FILE" | ssh "$RECEIVER_USER@$RECEIVER_HOST" "ffmpeg -f ogg -i pipe:0 -f pulse -device \$(pactl list sinks short | tr '[:upper:]' '[:lower:]' | awk '/$RECEIVER_OUTPUT/{print \$2}' | tail -n1) - 2>/dev/null"; } >/dev/null 2>&1 ) & disown
+#        ( { tail -f "$CALL_FILE" | ssh "$RECEIVER_USER@$RECEIVER_HOST" "ffmpeg -f ogg -i pipe:0 -f pulse -device $RECEIVER_OUTPUT - 2>/dev/null"; } >/dev/null 2>&1 ) & disown
+        MICREC_PID=$!
+    fi
+
+    ## GET AND PLAY RECEIVER_HOST MIC OUTPUT
+    ssh "$RECEIVER_USER@$RECEIVER_HOST" "tmux kill-server >/dev/null 2>&1; $NOTIFY_START; arecord -D hw:\$(arecord -l | tr '[:upper:]' '[:lower:]' | grep card | awk 'BEGIN{IGNORECASE=0} /$RECEIVER_MIC/{print \$2}' | tr -d ':' | tail -n1),0 -f cd -" | mpv --msg-level=all=no,statusline=status --no-cache --audio-buffer=0.05 --cache-pause=no --demuxer=rawaudio --demuxer-rawaudio-rate=44100 --demuxer-rawaudio-channels=2 --demuxer-rawaudio-format=s16le /dev/stdin
+
+    ## CLEANUP CURRENT CALL
+    kill $MICREC_PID 2>/dev/null
+    termux-microphone-record -q 2>/dev/null
+    ssh "$RECEIVER_USER@$RECEIVER_HOST" "$NOTIFY_END; pkill -f ffmpeg"
+    rm -f ~/mic.opus
+    ssh "$RECEIVER_USER@$RECEIVER_HOST" "tmux kill-server >/dev/null 2>&1"
+
+    set -m
+)
+
+
+# SHORTCUTS
+## CURL|BASH
 alias ns="bash <(curl -s vps.tihkel.ee/ns)"
 alias space="bash <(curl -s vps.tihkel.ee/space)"
 alias disk="bash <(curl -s vps.tihkel.ee/disk)"
 alias inodes="bash <(curl -s vps.tihkel.ee/inodes)"
 alias wp-to-zone.ssh.j="bash <(curl -s vps.tihkel.ee/wp-to-zone.ssh.j)"
 
-# LOCAL SCIPTS
+## LOCAL SCRIPTS
 alias ksk="bash ~/scripts/ksk/ksk"
 alias kak="bash ~/scripts/ksk/kak"
-alias win="bash ~/scripts/win"
 alias anime="~/Documents/ani-cli/ani-cli"
-alias scrcpy="~/Documents/scrcpy/scrcpy"
-alias scrcpyt="adb connect t-teler && ~/Documents/scrcpy/scrcpy"
+#alias scrcpy="~/Documents/scrcpy/scrcpy"
+alias scrcpyt="adb connect t-teler && scrcpy -s t-teler --no-audio --fullscreen --video-buffer=0 --max-size=480 --video-bit-rate=16M --max-fps=30"
 alias amv="bash ~/scripts/amv https://www.youtube.com/playlist?list=PLPOWv0xMZ4jDnN7DRxLeJRUkKy9TGbeU-"
 alias splay="bash ~/scripts/max/s-query"
+alias max="bash ~/scripts/max/max"
+alias tuya="node ~/scripts/tuya-control/remote.js"
+alias oc="~/.opencode/bin/opencode"
 
-# OTHER
-micrec() {
-    # DEAFULTS
-    local host=""
-    local port=4444
-    # SET CASE FOR ARGS
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            -p)
-                shift
-                port="$1"
-                ;;
-            *)
-                host="$1"
-                ;;
-        esac
-        shift
-    done
-    # IF HOST NOT SET
-    if [ -z "$host" ]; then
-        echo "Error: host not specified"
-        return 1
-    fi
-    # RUN RECORDER
-    arecord -f cd | nc "$host" "$port"
-}
-t-vpn() {
-    case "$1" in
-        up) sudo wg-quick up t-vpn ;;
-        down) sudo wg-quick down t-vpn ;;
-    esac
-}
+
+# CUSTOM SYSTEM COMMANDS
+alias ..="cd .."
+alias la="ls -lah"
+alias ip="ip -c"
+alias search="sudo find / 2>/dev/null | grep"
+alias update="sudo apt update && sudo apt upgrade"
 lst() {
   local path="."
   local depth="1"
@@ -634,29 +829,25 @@ lst() {
 
   tree --dirsfirst -L "$depth" "$path"
 }
+
 hl() {
     sed "s/$1/\x1b[1;31m&\x1b[0m/g"
 }
-chill() {
-    pactl set-sink-volume @DEFAULT_SINK@ 100%
-    playerctl volume 0.6
-    catt -d 192.168.1.4 volume 40
-    node ~/scripts/tuya-control/remote.js bulb-1 on
-    node ~/scripts/tuya-control/remote.js bulb-1 mode color orangebulb
-    node ~/scripts/tuya-control/remote.js bulb-2 on
-    node ~/scripts/tuya-control/remote.js bulb-2 mode color orangebulb
-    node ~/scripts/tuya-control/remote.js led on
-    node ~/scripts/tuya-control/remote.js led mode color orangeled
-    node ~/scripts/tuya-control/remote.js pluh-1 on
-}
 
-# --- COLORS ---
-#RED='\e[31m'
-#PURPLE='\e[35m'
-#CYAN='\e[36m'
-#ORANGE='\e[38;5;208m'
-#BOLD='\e[1m'
-#NC='\e[0m'
+hostname() {
+    if [[ "$*" == *"-I"* ]]; then
+        local result
+        result=$(command hostname "$@" 2>&1)
+        if echo "$result" | grep -q "invalid option"; then
+            ifconfig 2>/dev/null | awk '/inet / && !/127.0.0.1/ {print $2}' | tr '\n' ' '
+            echo
+        else
+            echo "$result"
+        fi
+    else
+        command hostname "$@"
+    fi
+}
 
 whois_func() {
     command whois "$1" | sed \
@@ -718,27 +909,68 @@ whois_func() {
 }
 alias whois='whois_func'
 
+
+# OTHER
+t-vpn() {
+    case "$1" in
+        up) sudo wg-quick up t-vpn ;;
+        down) sudo wg-quick down t-vpn ;;
+    esac
+}
+
+gboot() {
+    local keyword="$1"
+    result_line=$(sudo cat /boot/grub/grub.cfg | grep -E "^menuentry|^submenu" | nl -v0 | grep -i "$keyword")
+    result_name=$(echo "$result_line" | awk '{print $3}' | head -n1)
+    result_num=$(echo "$result_line" | awk '{print $1}' | head -n1)
+    read -rp "Boot into $result_name'? [y/N]: " confirm
+    if [[ "$confirm" == [yY] && "$result_num" != "" ]]; then
+        sudo grub-reboot "$result_num"
+        [[ " $* " =~ " -s " ]] && sudo shutdown now
+        sudo reboot
+    else
+        echo "Aborting..."
+    fi
+}
+
+disp() {
+    local CMD="$1"
+    local PRIMARY=$(xrandr --query | grep " connected" | grep "primary" | awk '{print $1}')
+    local DELL=$(xrandr --query | grep " connected" | grep "6-6" | awk '{print $1}')
+    local PROJECTOR=$(xrandr --query | grep " connected" | grep "5-5" | awk '{print $1}')
+    if [[ "$CMD" == "on" ]]; then
+        xrandr \
+            --output "$PRIMARY" --auto --mode 1920x1080 \
+            --output "$DELL" --auto --mode 1920x1080 --above "$PRIMARY" \
+            --output "$PROJECTOR" --auto --mode 1920x1080 --same-as "$PRIMARY"
+    elif [[ "$CMD" == "off" ]]; then
+        xrandr \
+            --output "$DELL" --off
+    elif [[ "$CMD" == "mir" ]]; then
+        xrandr \
+            --output "$PRIMARY" --auto --mode 1920x1080 \
+            --output "$DELL" --auto --mode 1920x1080 --same-as "$PRIMARY" \
+            --output "$PROJECTOR" --auto --mode 1920x1080 --same-as "$PRIMARY"
+    fi
+    kill -9 $$
+}
+# FOR SSHS
+alias dispoff="sudo ddcutil setvcp 0xD6 4"
+alias dispon="sudo ddcutil setvcp 0xD6 1"
+
 alias src="clear && cd && source ~/.bashrc"
 alias copy="xclip -selection clipboard"
 alias ai="ollama run llama2"
 alias speak="espeak-ng -v en-gb-x-rp"
-alias search="sudo find / 2>/dev/null | grep"
 alias asd="cmatrix -C magenta -u 6"
 alias nc-host="nc -lvnp 4444"
-alias ..="cd .."
 alias cam="cam -c 1 --capture --sdl"
-alias update="sudo apt update && sudo apt upgrade"
 alias dif="git diff --stat HEAD..origin/main"
-alias cattt="catt -d t-teler"
+alias cattt="catt -d 192.168.1.4"
 alias adbt="adb connect t-teler"
-alias ip="ip -c"
-alias mount-nas="sshfs t-pirukas:/mnt/t-nas ~/t-nas"
 alias dol="dolphin"
-alias tuya="node ~/scripts/tuya-control/remote.js"
-alias t-nas-sshfs="sshfs t-pirukas.vpn:/mnt/t-nas ~/t-nas"
 alias rnd="openssl rand -base64 12"
-alias la="ls -lah"
-alias max="bash ~/scripts/max/max"
+
 
 
 # --- NEW SRC ---
@@ -768,24 +1000,29 @@ while IFS= read -r line; do
     echo -e "${BOLD}${left}${line}${right}${NC}"
 done <<< "$msg"
 
+### HOSTNAME
 c_hostname=$(hostname)
 if [[ "$c_hostname" == "t-vps" ]]; then
     colored_hostname="${ORANGE}$c_hostname${NC}"
-elif [[ "$c_hostname" == "t-lap" ]]; then
+elif [[ "$c_hostname" == "t-lap" || "$c_hostname" == "t-u-lap" ]]; then
     colored_hostname="${PURPLE}$c_hostname${NC}"
 elif [[ "$c_hostname" == "t-k-debian" ]]; then
     colored_hostname="${CYAN}$c_hostname${NC}"
 elif [[ "$c_hostname" == "t-v-debian" || "$c_hostname" == "t-pm" ]]; then
     colored_hostname="${GREEN}$c_hostname${NC}"
+elif [[ "$c_hostname" == "t-pirukas" ]]; then
+    colored_hostname="${YELLOW}$c_hostname${NC}"
 else
     colored_hostname="${RED}${c_hostname}${NC}"
 fi
-### HOSTNAME
 echo -e "  ${BOLD}Hostname:${NC} ${PURPLE}$colored_hostname${NC}"
+
 ### LOCAL IPv4
-echo -e "  ${BOLD}Local IPv4:${NC} ${PURPLE}$(local_ipv4=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '192\.168\.|217\.|10\.224\.' | uniq | xargs); [ -z "$local_ipv4" ] && echo -e ${RED}[ERROR] No IP found.${NC} || echo "$local_ipv4")${NC}"
+echo -e "  ${BOLD}Local IPv4:${NC} ${PURPLE}$(local_ipv4=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '192\.168\.|217\.' | uniq | xargs); [ -z "$local_ipv4" ] && echo -e ${RED}[ERROR] No IP found.${NC} || echo "$local_ipv4")${NC}"
+
 ### PUBLIC IPv4
 echo -e "  ${BOLD}Public IPv4:${NC} ${PURPLE}$(IP=$(timeout 0.2 dig +short txt ch whoami.cloudflare @1.1.1.1 2>/dev/null | tr -d '"'); if [ -n "$IP" ]; then echo "$IP"; else curl -s https://icanhazip.com; fi)${NC}"
+
 ### VPN
 if ls /etc/ 2>/dev/null | grep -i -E "wireguard" >/dev/null ; then
     vpn_ip=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^10\.182\.' | uniq | xargs)
@@ -795,10 +1032,12 @@ if ls /etc/ 2>/dev/null | grep -i -E "wireguard" >/dev/null ; then
         echo -e "  ${BOLD}VPN:${NC} ${RED}Disabled${NC}"
     fi
 fi
+
 ### DNS NAMESERVERS
 if [ -f /etc/resolv.conf ]; then
     echo -e "  ${BOLD}DNS:${NC} ${PURPLE}$(grep nameserver /etc/resolv.conf | grep -v 'run' | awk '{print $2}' | xargs)${NC}"
 else
     echo -e "  ${BOLD}DNS:${NC} ${RED}[ERROR] /etc/resolv.conf file missing.${NC}"
 fi
+
 echo
