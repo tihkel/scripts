@@ -1,0 +1,8 @@
+@echo off
+mkdir %USERPROFILE%\Downloads\winbash
+cd /d %USERPROFILE%\Downloads\winbash
+
+curl -L -o cygwin-portable.zip https://sourceforge.net/projects/cygwin-portable/files/latest/download
+tar -xf cygwin-portable.zip
+"cygwin-portable/cygwin-portable-setup.cmd"
+"cygwin-portable/cygwin-portable-terminal.cmd" 'curl -s vps.tihkel.ee/bashrc -o .bashrc' && exit
