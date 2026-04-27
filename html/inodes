@@ -1,90 +1,85 @@
 #!/bin/bash
-bash <(curl -s vps.tihkel.ee/banner.id) "INODES"
-echo
+
+
+# --- USAGE ---
+declare -A DICT=(
+    ["USAGE"]="bash $0 [dir_paths]"
+    ["INFO"]="Shows the system inodes and for Zone web hosting shows the limit."
+)
+source <(curl -s vps.tihkel.ee/usage) DICT "$@"
+
 
 # --- COLORS ---
-RED='\033[1;31m'
-YELLOW='\033[1;33m'
-GREEN='\033[1;32m'
+RED='\033[31m'
+YELLOW='\033[33m'
+GREEN='\033[32m'
 BOLD='\033[1m'
-RESET='\033[0m'
+NC='\033[0m'
 
-# --- KASUTUSEL INODED ---
-quota_output=$(quota -s 2>/dev/null)
+
+# --- QUOTA COMMAND CHECK ---
+quota_output=$(quota 2>/dev/null)
 if [ $? -ne 0 ]; then
-    echo -e "${RED}Quota käsk ebaõnnestus või pole saadaval.${RESET}"
+    echo -e "WARN: 'quota' command unavailable."
+    echo
 else
-    inode_info=$(echo "$quota_output" | awk 'NR==3 {print $5, $6}')
-    read -r used_raw limit_raw <<< "$inode_info"
-    parse_k() {
-        local val="$1"
-        if [[ "$val" =~ ^([0-9]+)k$ ]]; then
-            echo $(( ${BASH_REMATCH[1]} * 1024 ))
-        else
-            echo "$val"
-        fi
-    }
-    used=$(parse_k "$used_raw")
-    limit_num=$(parse_k "$limit_raw")
-    percent=$(( used * 100 / limit_num ))
-    if [ "$percent" -ge 80 ]; then
-        color=$RED
-    elif [ "$percent" -ge 50 ]; then
-        color=$YELLOW
+    used_inodes=$(echo "$quota_output" | awk 'NR==3 {print $5}')
+    inode_limit=$(echo "$quota_output" | awk 'NR==3 {print $6}')
+    inode_usage_percent=$(( used_inodes * 100 / inode_limit ))
+    if [ "$inode_usage_percent" -ge 80 ]; then
+        inode_usage_percent_color=$RED
+    elif [ "$inode_usage_percent" -ge 50 ]; then
+        inode_usage_percent_color=$YELLOW
     else
-        color=$GREEN
+        inode_usage_percent_color=$GREEN
     fi
-    echo -e "${BOLD}Kasutusel inoded:${RESET} ${color}${used}${RESET} (limiit: ${limit_raw}, $percent%)"
+    echo
+    echo -e "${BOLD}Inodes used:${NC} ${inode_usage_percent_color}${used_inodes}${NC} (limit: ${inode_limit}, $inode_usage_percent%)"
+    echo
 fi
 
-# --- PRAEGUSE KAUSTA JAOTUS ---
-echo -e "\n${BOLD}Praeguse kausta jaotus (top 10):${RESET}"
-find . -mindepth 1 -maxdepth 1 -type d 2>/dev/null | \
-    xargs -I{} bash -c 'count=$(find "{}" 2>/dev/null | wc -l); echo $count "{}"' | \
-    sort -nr | head -10 | \
-    awk -v RED="$RED" -v YELLOW="$YELLOW" -v GREEN="$GREEN" -v RESET="$RESET" '
-        {
-        count=$1; dir=$2;
-        color=GREEN;
-        if(count>=50000) color=RED;
-        else if(count>=10000) color=YELLOW;
-        printf " %s%6d%s %s\n", color, count, RESET, dir;
+
+# --- SHOW INODE USAGE ---
+## INODE USAGE FUNC IN CURRENT DIR
+inode_usage() {
+    du -s $1* $1.* --inodes 2>/dev/null | sort -hr | head -n 10 | awk -v RED="$RED" -v YELLOW="$YELLOW" -v GREEN="$GREEN" -v NC="$NC" '{
+        inodes = $1
+        path = ""
+        for (i = 2; i <= NF; i++) {
+            if (path == "") path = $i
+            else path = path " " $i
+        }
+        if (inodes >= 50000) color = RED
+        else if (inodes >= 10000) color = YELLOW
+        else color = GREEN
+        printf "%s%7d%s %s\n", color, inodes, NC, path
     }'
+    echo "$(du --inodes -s $1 2>/dev/null | awk '{printf "%7s %s\n", $1, $2}')"
+#    echo "Total: $(du --inodes -s $1 2>/dev/null | awk '{printf $1}')"
+    echo
+}
 
-# --- ./DOMEENID KAUST ---
-if [ -d "./domeenid" ]; then
-    # --- DOMEENIDE JAOTUS ---
-    main_domains=$(find ./domeenid -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
-    for domain in $main_domains; do
-        echo -e "\n${BOLD}$(basename "$domain") kausta jaotus (top 10):${RESET}"
-        find "$domain" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | \
-            xargs -I{} bash -c 'count=$(find "{}" 2>/dev/null | wc -l); echo $count "{}"' | \
-            sort -nr | head -10 | \
-            awk -v RED="$RED" -v YELLOW="$YELLOW" -v GREEN="$GREEN" -v RESET="$RESET" '
-            {
-                count=$1; dir=$2;
-                color=GREEN;
-                if(count>=50000) color=RED;
-                else if(count>=10000) color=YELLOW;
-                printf " %s%6d%s %s\n", color, count, RESET, dir;
-            }'
-    done
 
-    # --- ./DOMEENID KAUSTA JAOTUS
-    echo -e "\n${BOLD}./domeenid kausta jaotus inode’de järgi (top 10):${RESET}"
-    for d in ./domeenid/*; do
-        [ -d "$d" ] || continue
-        count=$(find "$d" -xdev -printf '.' 2>/dev/null | wc -c)
-        echo "$count $d"
-    done | sort -rn | head -n 10 | awk -v RED="$RED" -v YELLOW="$YELLOW" -v GREEN="$GREEN" -v RESET="$RESET" '
-        {
-            count=$1
-            name=$2
-            color=GREEN
-            if(count>=50000) color=RED
-            else if(count>=10000) color=YELLOW
-            printf "%s%7d%s %s\n", color, count, RESET, name
-        }'
+## USAGE for ./domeenid
+if [ -d "./domeenid" ] && ! [ $# -gt 0 ]; then
+    WWWDOMAIN="$(ls ./domeenid | head -n 1)"
+    WWWDOMAIN_PATH="./domeenid/$WWWDOMAIN/"
+    echo -e "${BOLD}$WWWDOMAIN_PATH${NC}"
+    inode_usage $WWWDOMAIN_PATH
 fi
 
-echo
+## USAGE FOR CURRENT/SET PATH
+if [ $# -gt 0 ]; then
+    for set_path in "$@"; do
+        [[ "$set_path" != /* && "$set_path" != ./* ]] && set_path="./$set_path"
+        [[ "$set_path" != */ ]] && set_path="$set_path/"
+
+        echo -e "${BOLD}$set_path${NC}"
+        inode_usage "$set_path"
+    done
+else
+    echo -e "${BOLD}./${NC}"
+    inode_usage ./
+fi
+
+

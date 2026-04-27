@@ -311,7 +311,7 @@ fi
 
 
 # --- CRONTAB ---
-the_CJ="0 4 * * * curl -s vps.tihkel.ee/home_dir_backup | USER=\"$USER\" bash > /home/$USER/home_dir_backup.log 2>&1"
+the_CJ="0 4 * * * curl -s vps.tihkel.ee/home_dir_backup | USER=\"$USER\" bash > /tmp/$USER_home_dir_backup.log 2>&1"
 #the_CJ="0 4 * * * BACKUP_DIR=/home/$USER/backups; MAX_BACKUPS=1; DATE=\$(date +\%F_\%H-\%M-\%S); mkdir -p \"\$BACKUP_DIR\"; tar --exclude=\"$USER/backups\" --exclude=\"$USER/vms\" --exclude=\"$USER/t-nas\" -czf \"\$BACKUP_DIR/\${DATE}_home_dir_backup_for_$USER@\$(hostname).tar.gz\" -C /home $USER >/dev/null; ls -1t \"\$BACKUP_DIR\" | tail -n +\$((MAX_BACKUPS+1)) | xargs -r -I {} rm -- \"\$BACKUP_DIR/{}\""
 
 if [ "$(hostname)" = "t-k-debian" ]; then
@@ -518,6 +518,8 @@ ${BOLD_PS1}${RED_PS1}"'$(getprop ro.product.brand)_$(getprop ro.product.model)'"
 ${NC_PS1}"':'"\
 ${GREEN_PS1}"'\w'"\
 ${NC_PS1}"'\$ '
+elif [[ $(hostname) == *"zoneas.eu" ]]; then
+    :
 else
     export PS1='\[\e]2;\u@\h: \w\a\]'"\
 ${BOLD_PS1}${GREEN_PS1}"'\u'"\
@@ -804,10 +806,14 @@ alias anime="~/Documents/ani-cli/ani-cli"
 alias scrcpyt="adb connect t-teler && scrcpy -s t-teler --no-audio --fullscreen --video-buffer=0 --max-size=480 --video-bit-rate=16M --max-fps=30"
 alias amv="bash ~/scripts/amv https://www.youtube.com/playlist?list=PLPOWv0xMZ4jDnN7DRxLeJRUkKy9TGbeU-"
 alias splay="bash ~/scripts/max/s-query"
-alias max="bash ~/scripts/max/max"
 alias tuya="node ~/scripts/tuya-control/remote.js"
 alias oc="~/.opencode/bin/opencode"
-
+max() {
+    ssh tihkel@t-k-debian.vpn "bash ~/scripts/max/max '$*'"
+}
+pivpn() {
+    ssh tihkel@t-pirukas.vpn "pivpn '$*'"
+}
 
 # CUSTOM SYSTEM COMMANDS
 alias ..="cd .."
@@ -911,6 +917,26 @@ alias whois='whois_func'
 
 
 # OTHER
+gitd() {
+    git fetch
+
+    local local="$(git diff --name-only; git ls-files --others --exclude-standard)";
+    local remote=$(git diff --name-only HEAD..origin/main)
+    local deleted=$(git diff --name-only --diff-filter=D HEAD..origin/main)
+
+    for f in $(printf "%s\n%s\n" "$local" "$remote" | sort -u); do
+      if echo "$deleted" | grep -qx "$f"; then
+        echo -e "\e[90m$f\e[0m"   # gray = deleted on remote
+      elif echo "$local" | grep -qx "$f" && echo "$remote" | grep -qx "$f"; then
+        echo -e "\e[33m$f\e[0m"   # yellow = overlap
+      elif echo "$local" | grep -qx "$f"; then
+        echo -e "\e[31m$f\e[0m"   # red = local only
+      else
+        echo -e "\e[32m$f\e[0m"   # green = remote only
+      fi
+    done
+}
+
 t-vpn() {
     case "$1" in
         up) sudo wg-quick up t-vpn ;;
@@ -954,9 +980,6 @@ disp() {
     fi
     kill -9 $$
 }
-# FOR SSHS
-alias dispoff="sudo ddcutil setvcp 0xD6 4"
-alias dispon="sudo ddcutil setvcp 0xD6 1"
 
 alias src="clear && cd && source ~/.bashrc"
 alias copy="xclip -selection clipboard"
@@ -976,10 +999,10 @@ alias rnd="openssl rand -base64 12"
 # --- NEW SRC ---
 # SETTINGS
 term_width=$(tput cols)
-msg=$(cat << EOF
- Hello $(whoami)! 
-EOF
-)
+#msg=$(cat << EOF
+# Hello $(whoami)! 
+#EOF
+#)
 
 # PROCESS EACH LINE
 while IFS= read -r line; do
@@ -998,7 +1021,8 @@ while IFS= read -r line; do
 
     # ECHO
     echo -e "${BOLD}${left}${line}${right}${NC}"
-done <<< "$msg"
+done <<< " Hello $(whoami)! "
+#done <<< "$msg"
 
 ### HOSTNAME
 c_hostname=$(hostname)

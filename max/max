@@ -441,7 +441,7 @@ while read -r line; do
         if (( matches > 0 )); then
             ((count+=matches))
             log GREEN "MONKEYS: $count"
-            $speak "[REMOVED]" &
+            $speak "fuck niggers" &
         fi
 
         handle_command "$command"

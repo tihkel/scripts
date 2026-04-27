@@ -1,13 +1,26 @@
 #!/bin/bash
 
-
 input="$1"
 domain=${input#http*://}; domain=${domain%%/*}; domain=${domain,,}
+
+
 # --- USAGE ---
+## MISSING REQUIRED ARG
 if [ -z "$domain" ]; then
-    echo "ERROR: Domain missing. Usage: ns <domain>"
+    echo "ERROR: Target missing."
+    echo
+    echo "Usage:"
+    echo "  bash $0 <domain_or_ip> [args]"
     exit 1
 fi
+
+# ARGUMENT USAGE MANAGER
+declare -A DICT=(
+    ["USAGE"]="bash $0 <domain_or_ip> [args]"
+    ["INFO"]="Script meant for domain/IP scan that primarily digs DNS records and site status with request status codes. Includes extra CMS checking from the sites HTML code. Does also include subdomain and port scanning with custom CMS checks (WP users, Site+Home URL etc.)"
+    ["-f"]="Runs full scan including: \n - custom CMS scans \n - subdomain search \n - nmap port scan"
+)
+source <(curl -s vps.tihkel.ee/usage) DICT "$@"
 clear
 
 
@@ -369,17 +382,35 @@ if [[ " $@ " =~ " -f " ]]; then
 # --- CMS BASED SCANNING ---
 ## WORDPRESS
 if [[ "$cms" == "WordPress" ]]; then
-    site_and_home_url=$(timeout 3 curl -sL "$domain/wp-json" | jq '{url,home}')
+    wp_json=$(timeout 3 curl -sL "$domain/wp-json")
+
+    wp_version=$(curl -sL "$domain" | grep -oP '(?<=content="WordPress )[^"]+')
+    site_and_home_url=$(echo "$wp_json" | jq '{url,home}')
     wp_users=$(curl -sL "$domain/wp-json/wp/v2/users" | jq '.[] | {id, name}')
+    xmlrpc_status=$(curl -sI https://tihkel.ee/xmlrpc.php | head -n1 | awk '{print $2}')
 fi
 echo -e "${PURPLE} CMS SCAN ${NC}$([ -n "$site_and_home_url" ] && echo -e ${GREEN}+${GRAY} || echo -e ${RED}-${GRAY})"
 echo -e "${PURPLE}──────────${GRAY}"
 if [[ "$cms" == "WordPress" ]]; then
+    ## WP VERSION
+    if [[ -n "$wp_version" ]]; then
+        echo -e "Version: $wp_version"
+    else
+        echo -e "${RED}WP version not found.${GRAY}"
+    fi
+    ## XMLRPC
+    if [[ "$xmlrpc_status" == "200" ]]; then
+        echo -e "xmlrpc.php: ${GREEN}$xmlrpc_status${GRAY}"
+    else
+        echo -e "xmlrpc.php: ${RED}$xmlrpc_status${GRAY}"
+    fi
+    ## WP SITE+HOME URLS
     if [[ -n "$site_and_home_url" ]]; then
         echo -e "$site_and_home_url"
     else
-        echo -e "${RED}Site and Home URL's not found."
+        echo -e "${RED}Site and Home URL's not found.${GRAY}"
     fi
+    ## WP USERS
     if [[ -n "$wp_users" ]]; then
         echo -e "$wp_users"
     else
@@ -474,7 +505,8 @@ fi
 # --- PORTS ---
 echo -e "${PURPLE} PORTS ${NC}"
 echo -e "${PURPLE}───────${GRAY}"
-timeout 10 nmap -sV "$domain" -v | awk '/^[0-9]+\/tcp/ {split($1,a,"/"); print a[1] " - " $3}'
+#timeout --signal=INT 10 nmap -sV "$domain" 2>/dev/null | grep -E '^[0-9]+/(tcp|udp)' | awk '{print $1 " - " $3}'
+nmap -sV "$domain" -v | grep -oP '\d+(?=/tcp)'
 #timeout 10 nmap -sV "$domain" -v | grep -oP '\d+(?=/tcp)'
 echo
 

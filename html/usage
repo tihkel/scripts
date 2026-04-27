@@ -1,0 +1,149 @@
+#!/bin/bash
+
+
+# --- SELF USAGE ---
+_show_self_usage() {
+    echo
+    echo 'Usage (add following to script beginning):
+  # --- USAGE ---
+  declare -A DICT=(
+      ["USAGE"]="<script_activation>"
+      ["INFO"]="<script_description>"
+      ["--arg-one"]="<arg_description>"
+      ["--arg-two"]="<arg_description>"
+      ["-o <value>"]="<arg_description>"
+  )'
+    echo "  source $0 DICT \"\$@\""
+    echo
+}
+
+
+# CREATE DICT FROM INPUT
+_INSERTED_DICT="$1"
+if [ -z "$_INSERTED_DICT" ]; then
+    echo "ERROR: DICT missing."
+    _show_self_usage
+    exit 1
+fi
+shift
+
+
+# CREATE ARGS FROM INPUT
+_INSERTED_ARGS=("$@")
+declare -n _DICT="$_INSERTED_DICT"
+
+
+# PRINT USAGE
+show_usage() {
+    echo
+
+    ## SPACE BEFORE ARG DESCRIPTION
+    local indent
+    indent=$(printf '%*s' 18 "")
+
+    ## PRINT USAGE
+    if [[ -n "${_DICT[USAGE]}" ]]; then
+        echo "Usage:"
+        echo -e "  ${_DICT[USAGE]}"
+        echo
+    fi
+
+    ## PRINT INFO
+    if [[ -n "${_DICT[INFO]}" ]]; then
+        echo -e "${_DICT[INFO]}" | fold -w 70
+        echo
+    fi
+
+    ## PRINT ARGS
+    echo "Args:"
+    for key in "${!_DICT[@]}"; do
+        ### SKIP SCRIPT USAGE AND INFO
+        [[ "$key" == "USAGE" || "$key" == "INFO" ]] && continue
+
+        local desc="${_DICT[$key]}"
+        printf "  %-15s " "$key"
+
+        ### FIRST LINE
+        echo -e "$desc" | fold -s -w 60 | head -1
+
+        ### WORD WRAP DESCRIPTION
+        echo -e "$desc" | fold -s -w 60 | tail -n +2 | while read -r line; do
+            printf "%s%s\n" "$indent" "$line"
+        done
+    done
+    echo
+}
+
+
+# CHECK IF HAS ARG IN DICT
+has_arg() {
+    local arg="$1"
+    local flag="${arg%% *}"
+
+    ## LET ARGS WITHOUT - THROUGH
+    [[ "$arg" != -* ]] && return 0
+
+    # CHECK IF ARG EXISTS IN DICT
+    for key in "${!_DICT[@]}"; do
+        local key_flag="${key%% *}"
+        [[ "$key_flag" == "$flag" ]] && return 0
+    done
+    return 1
+}
+
+
+# CHECK IF ARG EXPECTS A VALUE
+expects_value() {
+    local arg="$1"
+    local flag="${arg%% *}"
+    for key in "${!_DICT[@]}"; do
+        local key_flag="${key%% *}"
+        [[ "$key_flag" == "$flag" ]] && [[ "$key" == *" "* ]] && return 0
+    done
+    return 1
+}
+
+
+# SHOW USAGE WITH --help
+[[ " ${_INSERTED_ARGS[*]} " =~ " --help " ]] && {
+    show_usage
+    exit 0
+}
+
+
+# CHECK EACH ARG FOR ERRORS
+i=0
+while [[ $i -lt ${#_INSERTED_ARGS[@]} ]]; do
+    arg="${_INSERTED_ARGS[$i]}"
+    next=$((i + 1))
+    has_value=0
+
+    # CHECK IF ARG IS A VALUE (not with -)
+    if [[ $next -lt ${#_INSERTED_ARGS[@]} ]]; then
+        next_arg="${_INSERTED_ARGS[$next]}"
+        if [[ -n "$next_arg" ]]; then
+            if [[ "${next_arg:0:1}" != "-" ]]; then
+                arg="$arg $next_arg"
+                has_value=1
+                ((i++))
+            fi
+        fi
+    fi
+
+    # UNKNOWN ARG
+    if ! has_arg "$arg"; then
+        echo "ERROR: Unknown argument '$arg'."
+        echo
+        show_usage
+        exit 1
+    fi
+
+    # EXPECTED VALUE MISSING FROM ARG
+    if expects_value "$arg" && [[ $has_value -eq 0 ]]; then
+        echo "ERROR: Argument '$arg' expects a value:"
+        show_usage | grep -- "$arg"
+        exit 1
+    fi
+
+    ((i++))
+done

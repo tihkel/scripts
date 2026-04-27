@@ -1,12 +1,42 @@
 #!/bin/bash
-bash <(curl -s vps.tihkel.ee/banner.id) "DISK"
 
-main_fs="/dev/$(lsblk -no NAME -r -o NAME,MOUNTPOINT | awk '$2=="/"{print $1}')"
-COLOR="\033[1;35m"
-NC="\033[0m"
 
+# --- USAGE ---
+declare -A DICT=(
+    ["USAGE"]="bash $0"
+    ["INFO"]="Shows an overview of the entire system disks usage."
+    ["-c <color>"]="Change the main color that shows for current system."
+)
+source <(curl -s vps.tihkel.ee/usage) DICT "$@"
+
+
+# --- MANAGE MAIN COLOR ---
+## DEFAULT COLOR
+COLOR='\033[1;35m'
+## CHANGE IF -c SET
+if [[ " $@ " =~ " -c " ]]; then
+    case "$(echo "$@" | awk '{for(i=1;i<=NF;i++) if($i=="-c") print $(i+1)}')" in
+        red)     COLOR='\033[31m' ;;
+        green)   COLOR='\033[32m' ;;
+        yellow)  COLOR='\033[33m' ;;
+        blue)    COLOR='\033[34m' ;;
+        magenta) COLOR='\033[35m' ;;
+        cyan)    COLOR='\033[36m' ;;
+        white)   COLOR='\033[37m' ;;
+        gray)    COLOR='\033[90m' ;;
+        red) COLOR='\033[31m' ;;
+    esac
+fi
+
+
+# --- df -h ---
+## ASK SUDO
 sudo echo && \
-df -h | awk -v COLOR="$COLOR" -v NC="$NC" 'NR>1{if($6=="/"){printf COLOR"%-20s %10s / %-10s %4s"NC"\n", $6, $3, $2, $5}else{printf "%-20s %10s / %-10s %4s\n", $6, $3, $2, $5}}' | grep -v "snap" && \
+df -h | awk -v COLOR="$COLOR" -v NC="\033[0m" 'NR>1{if($6=="/"){printf COLOR"%7s / %-7s %-10s %-s"NC"\n", $3, $2, $5, $6}else{printf "%7s / %-7s %-10s %-s\n", $3, $2, $5, $6}}' | grep -v "\/snap\/"
+
+
+# --- fdisk ---
 echo && \
-sudo fdisk -l $(lsblk -dn -o NAME | grep -E "^(sd|nvme|hd)" | awk '{print "/dev/" $1}') | awk -v main="$main_fs" -v COLOR="$COLOR" -v NC="$NC" 'NR>9{if($1==main){printf COLOR"%-20s %-10s %-10s"NC"\n", $1, $5, substr($0,index($0,$6))}else{printf "%-20s %-10s %-10s\n", $1, $5, substr($0,index($0,$6))}}' && \
+sudo fdisk -l $(lsblk -dn -o NAME | grep -E "^(sd|nvme|hd)" | awk '{print "/dev/" $1}') | awk -v main="/dev/$(lsblk -no NAME -r -o NAME,MOUNTPOINT | awk '$2=="/"{print $1}')" -v COLOR="$COLOR" -v NC="\033[0m" 'NR>9{if($1==main){printf COLOR"%-20s %-10s %-10s"NC"\n", $1, $5, substr($0,index($0,$6))}else{printf "%-20s %-10s %-10s\n", $1, $5, substr($0,index($0,$6))}}'
+
 echo
