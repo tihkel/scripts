@@ -1,4 +1,5 @@
 #!/bin/bash
+[ -f ~/scripts/.env ] && source ~/scripts/.env
 
 
 # --- NOT INTERACTIVE SHELL ---
@@ -738,7 +739,7 @@ tun() {
 # PLAYERCTL
 alias play="sshk playerctl play -p spotify && kill -9 $$"
 alias stop="sshk playerctl stop -p spotify && kill -9 $$"
-alias skip="sshk playerctl next -p spotify && kill -9 $$"
+alias skip="sshk playerctl next -p spotify"
 
 # TERMCALL
 termcall() (
@@ -747,8 +748,9 @@ termcall() (
     local RECEIVER_MIC=""
     local RECEIVER_OUTPUT=""
     local CALL_FILE="$HOME/mic.opus"
-    local NOTIFY_START="espeak-ng -g6 'incoming terminal call'"
-    local NOTIFY_END="espeak-ng -g6 'terminal call disconnected'"
+    [ -f ~/scripts/.env ] || local SPEAK="espeak-ng -g6"
+    local NOTIFY_START="$SPEAK 'incoming terminal call'"
+    local NOTIFY_END="$SPEAK 'terminal call disconnected'"
     local RECEIVER_USER="tihkel"
     local RECEIVER_HOST="$1"
 
