@@ -1,0 +1,19 @@
+#!/bin/bash
+
+# === WORDPRESS PATH FIXES === #
+
+# --- CONFIG ---
+OLD_STRING=""
+NEW_STRING=""
+
+
+# --- FILES ---
+## FIND OLD:
+grep -rl '"$OLD_STRING"' .
+## REPLACE OLD WITH NEW
+grep -rl '"$OLD_STRING"' . | xargs sed -i 's/$OLD_STRING/$NEW_STRING/g'
+
+
+# --- DB ---
+## REPLACE OLD WITH NEW
+wp search-replace '"$OLD_STRING"' '"$NEW_STRING"' --all-tables --skip-columns=guid --report-changed-only
