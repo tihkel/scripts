@@ -17,7 +17,7 @@ tmux split-window -v -t "$pane0" 'watch -ctn120 bash ~/scripts/ksk/mycal'
 pane1=$(tmux display-message -p "#{pane_id}")
 # LINE2
 tmux select-layout -t "$SESSION" even-vertical >/dev/null 2>&1
-tmux split-window -v -t "$pane1" 'bash ~/scripts/ksk/bus -b 24 -f Kadaka -a kodu'
+tmux split-window -v -t "$pane1" 'bash ~/scripts/ksk/bus -b 24 -d Estonia -s kodu'
 #tmux split-window -v -t "$pane1" 'tail'
 #tmux split-window -v -t "$pane1" 'bash ~/scripts/ksk/ssh-auth'
 pane2=$(tmux display-message -p "#{pane_id}")
@@ -51,16 +51,16 @@ pane6=$(tmux display-message -p "#{pane_id}")
 # PANE7
 ssh_ip=$(echo $SSH_CLIENT | awk '{print $1}')
 if [[ "$ssh_ip" == 217.146.66.5 ]]; then
-   tmux split-window -h -t "$pane6" 'bash ~/scripts/ksk/bus -b 13 -f Väike-Õismäe -a zone'
+   tmux split-window -h -t "$pane6" 'bash ~/scripts/ksk/bus -b 13 -d Väike-Õismäe -s zone'
 else
-   tmux split-window -h -t "$pane6" 'bash ~/scripts/ksk/bus -b 13 -f Priisle -a kodu'
+   tmux split-window -h -t "$pane6" 'bash ~/scripts/ksk/bus -b 13 -d Priisle -s kodu'
 fi
 pane7=$(tmux display-message -p "#{pane_id}")
 (
   while true; do
     sleep 1.5
     for i in {1..4}; do
-      sleep 1
+      sleep 1.2
       tmux send-keys -t "$pane7" a
       tmux send-keys -t "$pane7" a
       tmux send-keys -t "$pane7" a
