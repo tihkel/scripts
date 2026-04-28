@@ -3,94 +3,98 @@
 
 # --- CONFIG ---
 DEVICE_IP="192.168.1.4"
-was_home=0
-offline_since=0
-offline_delay=2
+VOLUME_DOWN_AFTER_TIME="23"
+VOLUME_DOWN_UNTIL_TIME="11"
+VOLUME_DOWN_UNDER_VOL="75"
+MORING_AFTER_TIME="6"
+MORING_BEFORE_TIME="11"
+
+source ~/scripts/.env
+
+# --- VARS ---
+offline_delay=5
 
 
-# --- CHECK IF DEVICE DISPLAY IS ON ---
-is_tv_on() {
-    timeout 5 adb connect "$DEVICE_IP" >/dev/null 2>&1
-    state=$(timeout 5 adb shell dumpsys display 2>/dev/null | grep 'mState=' | cut -d'=' -f2)
+# --- FUNCS ---
+log() {
+    local LEVEL=$1
+    shift
+    local DATE=$(date +'%Y-%m-%d %H:%M:%S')
+    echo "[$DATE] [$LEVEL] $*"
+}
+
+tv_is_on() {
+    timeout 2 adb connect "$DEVICE_IP" >/dev/null 2>&1
+    state=$(timeout 2 adb -s "$DEVICE_IP" shell dumpsys display 2>/dev/null | grep 'mState=' | cut -d'=' -f2)
     [[ "$state" == "ON" ]]
 }
 
 
+
 # --- CHECK IF DEVICE WAS ONLINE AT THE START OF THE SCRIPT ---
-if is_tv_on; then
-    echo "[DEBUG] Device ONLINE at script start"
-    was_home=1
+WAS_ONLINE=0
+if tv_is_on; then
+    log INFO "ONLINE at script start."
+    WAS_ONLINE=1
 else
-    echo "[DEBUG] Device OFFLINE at script start"
-    was_home=0
+    log INFO "OFFLINE at script start."
+    WAS_ONLINE=0
 fi
 
 
 # --- MAIN LOOP ---
 while true; do
-    now=$(date +%s)
-    # IF DEVICE IS ONLINE
-
-    # --- SET VOLUME DOWN FOR SET TIME ---
-    current_hour=$(date +%-H)
-    current_volume=$(pactl get-sink-volume @DEFAULT_SINK@ | awk '{print $5}' | head -n1 | tr -d '%')
-    if (( (current_hour >= 23 || current_hour <= 11) && current_volume > 75 )); then
-        pactl set-sink-volume @DEFAULT_SINK@ 75%
-        catt -d $DEVICE_IP volume 40
-        espeak-ng -v en-gb-x-r "it's past 11, turning volume down"
+    # SET VOLUME DOWN FOR SET TIME
+    CURRENT_HOUR=$(date +%-H)
+    CURRENT_VOLUME=$(pactl get-sink-volume @DEFAULT_SINK@ | awk '{print $5}' | head -n1 | tr -d '%')
+    if (( (CURRENT_HOUR >= VOLUME_DOWN_AFTER_TIME || CURRENT_HOUR <= VOLUME_DOWN_UNTIL_TIME) && CURRENT_VOLUME > VOLUME_DOWN_UNDER_VOL )); then
+        pactl set-sink-volume @DEFAULT_SINK@ "$VOLUME_DOWN_UNDER_VOL%"
+        timeout 5 catt -d $DEVICE_IP volume 40
+        $SPEAK "it's getting late, turning volume down"
     fi
 
-    if is_tv_on; then
-        echo "[DEBUG] Device online, was_home=$was_home, offline_since=$offline_since"
+    # DEVICE STATUS CHANGE AFFECTS
+    if tv_is_on; then
+        log INFO "Device online, WAS_ONLINE=$WAS_ONLINE"
 
-        ## CHECK IF ALREADY MUSIC PLAYING - IF YES: DONT START COMMANDS
-        if [[ $was_home -eq 0 && "$(playerctl -p spotify status 2>/dev/null)" != "Playing" ]]; then
-            # IF ITS MORNING THEN RUN MORNING COMMANDS
-            if (( current_hour >= 6 && current_hour <= 11 )); then
-                echo "$(date '+%F %T') running MORNING commands..."
-                (
+        ## IF WASNT ONLINE AND SPOTIFY NOT PLAYING
+        if [[ $WAS_ONLINE -eq 0 ]];then
+            if [[ "$(sleep 5; playerctl -p spotify status 2>/dev/null)" != "Playing" ]]; then
+                # IF MORNING: RUN MORNING COMMANDS
+                if (( CURRENT_HOUR >= MORING_AFTER_TIME && CURRENT_HOUR <= MORING_BEFORE_TIME )); then
+                    log INFO "Running MORNING commands..."
                     # --- MORNING COMMANDS ---
                     bash ~/scripts/max/max "wake up"
-                ) &
-            else
-                echo "$(date '+%F %T') running WELCOME BACK commands..."
-                (
-                    # --- WELCOME BACK COMMANDS ---
+                else
+                    log INFO "Running WELCOME commands..."
+                    # --- WELCOME COMMANDS ---
                     bash ~/scripts/max/max "im home"
-                ) &
+                fi
+            else
+                log INFO "Did not run commands - spotify playing."
             fi
-            was_home=1
-            offline_since=0
         fi
 
+        WAS_ONLINE=1
+
+    # TV IS OFF
     else
-        echo "[DEBUG] Device offline, was_home=$was_home, offline_since=$offline_since"
-        if [[ $was_home -eq 1 ]]; then
-            # START OFFLINE COMMANDS TIMER
-            if (( offline_since == 0 )); then
-                offline_since=$now
-                echo "[DEBUG] Starting offline timer: offline_since=$offline_since"
-            fi
-            diff=$(( now - offline_since ))
-            remaining=$(( offline_delay - diff ))
-            if (( remaining > 0 )); then
-                echo -ne "\rDevice offline. Offline commands in $(printf '%02d:%02d:%02d' $((remaining/3600)) $(((remaining%3600)/60)) $((remaining%60))) "
-            else
-                # IF OFFLINE COMMANDS TIMER ENDS THEN RUN OFFLINE COMMANDS
-                echo -e "\n$(date '+%F %T') running offline commands..."
-                (
-                    # --- OFFLINE COMMANDS ---
-                    node ~/scripts/tuya-control/remote.js led off
-                    node ~/scripts/tuya-control/remote.js pluh-1 off
-                    node ~/scripts/tuya-control/remote.js pluh-2 off
-                    node ~/scripts/tuya-control/remote.js pluh-2 on
-                    node ~/scripts/tuya-control/remote.js bulb-1 off
-                    node ~/scripts/tuya-control/remote.js bulb-2 off
-                ) &
-                was_home=0
-                offline_since=0
-            fi
+        log INFO "Device offline, WAS_ONLINE=$WAS_ONLINE"
+        if [[ $WAS_ONLINE -eq 1 ]]; then
+            log INFO "Running OFFLINE commands..."
+            # --- OFFLINE COMMANDS ---
+            node ~/scripts/tuya-control/remote.js led off
+            node ~/scripts/tuya-control/remote.js pluh-1 off
+            node ~/scripts/tuya-control/remote.js pluh-2 off
+            node ~/scripts/tuya-control/remote.js pluh-2 on
+            node ~/scripts/tuya-control/remote.js bulb-1 off
+            node ~/scripts/tuya-control/remote.js bulb-2 off
+
+            WAS_ONLINE=0
         fi
     fi
-    sleep 10
+
+    sleep 1
+
 done
+
