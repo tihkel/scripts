@@ -1,0 +1,57 @@
+#!/bin/bash
+
+## ALARMS
+# ---
+## Format: ["HH:MM:SS|DAYS"]="Label"
+## DAYS: * | weekdays | weekends | mon,wed,fri
+# ---
+declare -A ALARMS
+ALARMS["08:57:00|weekdays"]="start work ... in: 3 ... minutes"
+ALARMS["14:57:00|weekdays"]="back to work ... in: 3 ... minutes"
+ALARMS["16:59:56|weekdays"]="work ends in 3<break time='1s'/>2<break time='1s'/>1"
+# ---
+
+
+#! === DO NOT EDIT === !#
+# --- SOURCE .ENV ---
+source ~/scripts/.env
+
+# --- NOTIFY() ---
+notify() {
+    echo -e "ALARM: $*"
+    $SPEAK -m "$*"
+    playerctl -p spotify volume 0.5
+    playerctl -p spotify play
+    sleep 5
+    playerctl -p spotify volume 0.6
+    sleep 5
+    playerctl -p spotify stop
+}
+
+
+# --- MANAGE DAYS ---
+day_matches() {
+    local today; today=$(date '+%a' | tr '[:upper:]' '[:lower:]')
+    case "${1,,}" in
+        \*|all)     return 0 ;;
+        weekdays)   [[ "$today" =~ ^(mon|tue|wed|thu|fri)$ ]] && return 0 ;;
+        weekends)   [[ "$today" =~ ^(sat|sun)$ ]] && return 0 ;;
+        *"$today"*) return 0 ;;
+    esac; return 1
+}
+
+
+# --- MAIN() ---
+fired=""
+while true; do
+    today=$(date '+%Y-%m-%d'); now=$(date '+%H:%M:%S')
+    [[ "$fired" != *"$today"* ]] && fired="$today"
+    for entry in "${!ALARMS[@]}"; do
+        t="${entry%%|*}"; days="${entry##*|}"
+        key="${today}:${entry}"
+        if [[ "$t" == "$now" ]] && day_matches "$days" && [[ "$fired" != *"$key"* ]]; then
+            notify "${ALARMS[$entry]}"; fired+=" $key"
+        fi
+    done
+    sleep 1
+done
