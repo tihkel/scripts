@@ -1,0 +1,120 @@
+#!/bin/bash
+
+
+# --- USAGE ---
+declare -A DICT=(
+    ["USAGE"]="bash $0 \n  (Quit by pressing 'q')"
+    ["INFO"]="Script uses tmux to show system logs at the same time with better formating and color."
+)
+source <(curl -s vps.tihkel.ee/usage) DICT "$@"
+
+
+# --- KILL LAST AND CREATE NEW SESSION ---
+tmux kill-server >/dev/null 2>&1
+sleep 0.2
+SESSION="logs"
+
+
+# --- VERTICAL LINES ---
+
+
+# LINE1
+tmux new-session -d -s "$SESSION" '
+
+## APACHE LOGS
+source ~/scripts/.env
+LOCAL_IP=$(curl -s ifconfig.me)
+sudo tail -f -n 200 /var/log/apache2/access.log | while IFS= read -r line; do
+    if [[ "$line" == *"$VPN_IP"* || "$line" == *"$LOCAL_IP"* ]]; then
+        echo -e "${GRAY}$line${NC}"
+    elif [[ "$line" == *"GET / HTTP/1.1"* ]]; then
+        echo -e "${YELLOW}$line${NC}"
+    elif [[ "$line" == *'GET'* && "$line" == *" 200 "* ]]; then
+        echo -e "${GREEN}$line${NC}"
+    else
+        echo -e "${RED}$line${NC}"
+    fi;
+done
+'
+pane0=$(tmux list-panes -t "$SESSION" -F "#{pane_id}" | head -n1)
+tmux select-layout -t "$SESSION" even-vertical
+
+
+# LINE2
+tmux split-window -v -t "$pane0" '
+
+## SSH LOGS
+source ~/scripts/.env
+LOCAL_IP=$(curl -s ifconfig.me)
+sudo journalctl -u ssh.service -n 200 -f | while IFS= read -r line; do
+    # Skip noise
+    #if [[ "$line" =~ Received\ disconnect|pam_env|pam_unix|error:|kex_exchange|Invalid\ user ]]; then
+    #    continue
+    #fi
+
+    timestamp=$(echo "$line" | awk "{print \$1, \$2, \$3}")
+    if [[ "$line" =~ "Accepted" ]]; then
+        user=$(echo "$line" | awk "{for(i=1;i<=NF;i++){if(\$i==\"for\"){print \$(i+1)}}}")
+        ip=$(echo "$line" | awk "{for(i=1;i<=NF;i++){if(\$i==\"from\"){print \$(i+1)}}}")
+        status="SUCCESS"
+        status_color="${GREEN}"
+        if [[ "$line" =~ "Accepted publickey" ]]; then
+            auth_method="key"
+        elif [[ "$line" =~ "Accepted password" ]]; then
+            auth_method="passwd"
+        fi
+    else
+        auth_method="passwd"
+        status_color="${RED}"
+        user=$(echo "$line" | awk "{print \$(NF-5)}")
+        ip=$(echo "$line" | awk "{print \$(NF-3)}")
+        if [[ "$line" =~ "Connection reset by authenticating user" ]]; then
+            status="FAILED"
+        elif [[ "$line" =~ "Connection reset by invalid user" ]]; then
+            status="INVALID"
+        elif [[ "$line" =~ "Connection reset by" ]]; then
+            status="FAILED"
+        elif [[ "$line" =~ "Connection closed by invalid user" ]]; then
+            status="INVALID"
+        elif [[ "$line" =~ "Disconnected from invalid user" ]]; then
+            status="INVALID"
+        elif [[ "$line" =~ "Connection closed by authenticating user" ]]; then
+            status="FAILED"
+        elif [[ "$line" =~ "Connection closed by" ]]; then
+            status="FAILED"
+        elif [[ "$line" =~ "Disconnected from authenticating user" ]]; then
+            status="FAILED"
+        else
+            continue
+        fi
+    fi
+
+    # Build the output string
+    output="$status_color[$timestamp] - - $ip - - $user - - $auth_method - - $status${NC}"
+
+    # Highlight your VPN/local IPs (override color)
+    if [[ "$line" == *"$VPN_IP"* || "$line" == *"$LOCAL_IP"* ]]; then
+        clean=$(echo -e "$output" | sed "s/\033\[[0-9;]*m//g")
+        echo -e "${GRAY}$clean${NC}"
+    else
+        echo -e "$output"
+    fi
+done
+'
+pane1=$(tmux display-message -p "#{pane_id}")
+tmux select-layout -t "$SESSION" even-vertical
+
+
+# --- TMUX SETTINGS ---
+tmux set-option -t "$SESSION" status off
+tmux set-option -t "$SESSION" mouse on
+tmux set-option -g display-panes-time 1
+tmux bind-key -T root q kill-session
+
+
+# FOCUS ON PANE
+tmux select-pane -t "$pane1"
+
+
+# --- START SESSION ---
+tmux attach-session -t "$SESSION"
