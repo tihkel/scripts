@@ -314,7 +314,7 @@ echo "Heard: $cmd"
             xfce4-terminal -e "bash ~/scripts/ksk/bus -b 24 -f Kadaka -a kodu"
             ;;
         *"kill"*)
-            log GREEN "Killing tmux kiosk..."
+            log GREEN "Killing kiosk..."
             $SPEAK "killing keyyawsk"
             pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
             tmux kill-server
