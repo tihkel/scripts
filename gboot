@@ -1,0 +1,28 @@
+#!/bin/bash
+
+# --- USAGE ---
+declare -A DICT=(
+    ["USAGE"]="bash $0 <os_name> [args]"
+    ["INFO"]="Grub-Boot script is a shortcut to boot into a different OS on the machine."
+    ["-s"]="Shutdown and after next boot go into the selected OS."
+)
+source <(curl -s vps.tihkel.ee/usage) DICT "$@"
+
+# --- FIND THE RESULTS FROM THE GIVEN KEYWORD ---
+keyword="$1"
+result_line=$(sudo cat /boot/grub/grub.cfg | grep -E "^menuentry|^submenu" | nl -v0 | grep -i "$keyword")
+result_name=$(echo "$result_line" | awk '{print $3}' | head -n1)
+result_num=$(echo "$result_line" | awk '{print $1}' | head -n1)
+
+# --- ASK CONFIRMATION INPUT ---
+read -rp "Boot into $result_name'? [y/N]: " confirm
+if [[ "$confirm" == [yY] && "$result_num" != "" ]]; then
+    # SET NEXT BOOT THE SELECTED OS
+    sudo grub-reboot "$result_num"
+    # SHUTDOWN IF ARG PROVIDED
+    [[ " $* " =~ " -s " ]] && sudo shutdown now
+    # OTHERWISE REBOOT
+    sudo reboot
+else
+    echo "Aborting..."
+fi
