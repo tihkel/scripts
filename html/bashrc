@@ -799,6 +799,7 @@ alias space="bash <(curl -s vps.tihkel.ee/space)"
 alias disk="bash <(curl -s vps.tihkel.ee/disk)"
 alias inodes="bash <(curl -s vps.tihkel.ee/inodes)"
 alias wp-to-zone.ssh.j="bash <(curl -s vps.tihkel.ee/wp-to-zone.ssh.j)"
+alias gboot="bash <(curl -s vps.tihkel.ee/gboot)"
 
 ## LOCAL SCRIPTS
 alias ksk="bash ~/scripts/ksk/ksk"
@@ -944,21 +945,6 @@ t-vpn() {
         up) sudo wg-quick up t-vpn ;;
         down) sudo wg-quick down t-vpn ;;
     esac
-}
-
-gboot() {
-    local keyword="$1"
-    result_line=$(sudo cat /boot/grub/grub.cfg | grep -E "^menuentry|^submenu" | nl -v0 | grep -i "$keyword")
-    result_name=$(echo "$result_line" | awk '{print $3}' | head -n1)
-    result_num=$(echo "$result_line" | awk '{print $1}' | head -n1)
-    read -rp "Boot into $result_name'? [y/N]: " confirm
-    if [[ "$confirm" == [yY] && "$result_num" != "" ]]; then
-        sudo grub-reboot "$result_num"
-        [[ " $* " =~ " -s " ]] && sudo shutdown now
-        sudo reboot
-    else
-        echo "Aborting..."
-    fi
 }
 
 disp() {
