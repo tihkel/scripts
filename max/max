@@ -1,25 +1,37 @@
 #!/bin/bash
+source ~/scripts/.env
 
-# --- COLORS ---
-GREEN="\e[32m"
-RED="\e[31m"
-YELLOW="\e[33m"
-GRAY="\e[90m"
-NC="\e[0m"
+# --- USAGE ---
+declare -A DICT=(
+    ["USAGE"]="bash $0 [command]"
+    ["INFO"]="Personal home assistant + LLM."
+    ["'lights <on|off>'"]="Turn lights on/off."
+    ["'volume <up|down>'"]="Turn volume up/down."
+    ["'wake up'"]="Run moring commands."
+    ["'im back'"]="Run welcome commands."
+    ["'kill'"]="Resets/kills kiosk/tmux session."
+    ["'reset'"]="Resets volume for all devices."
+)
+source <(curl -s vps.tihkel.ee/usage) DICT "$@"
+
 
 # --- SETTINGS ---
 LISTEN_MODE=0
 LAST_COMMAND_TIME=0
 CURRENT_VOLUME=""
-LISTEN_VOLUME=-30%
+LISTEN_VOLUME=-20%
 TIMEOUT=30
 export VOSK_LOG_LEVEL=-1
-TV="192.168.1.4"
 LOG_FILE="/tmp/max.log"
+ACKNOWLEDGEMENT_WORDS=("okay" "alright" "right on it" "done" "got it" "roger" "copy that" "on it" "affirmative" "sure thing" "no problem" "will do" "10 4" "consider it done" "say no more" "handled" "gotcha" "on the case")
+LISTENING_WORDS=("yes sir" "what's up" "yes?" "listening" "whats good" "yo" "sup" "go ahead" "i'm here" "shoot" "present" "at your service")
+CLOSING_WORDS=("you're welcome" "no problem" "no worries" "we good" "all good" "anytime" "don't mention it" "happy to help" "glad to help" "it's nothing" "yep" "of course" "no big deal" "cool")
+#CONFUSED_WORDS=("what?" "huh?" "sorry?" "pardon?" "pardon me?" "come again?" "say again?" "repeat that" "could you repeat that?" "didn't catch that" "i didn't catch that" "can you say that again?" "say that again" "excuse me?" "wait what" "one more time" "run that back" "come again" "hmm?" "sorry, what was that?")
+# --- END OF SETTINGS ---
 
-source ~/scripts/.env
 
-# --- LOGGING ---
+# --- FUNCTIONS ---
+## LOGGING
 log() {
     local COLOR_NAME=$1
     shift
@@ -30,8 +42,27 @@ log() {
     fi
     local COLOR="${!COLOR_NAME}"
     local INPUT=$*
+    [[ -n "$1" ]] && [[ -n "$cmd" ]] && [[ "$COLOR_NAME" == "GREEN" ]] && echo -e "${CYAN}Heard: $cmd${NC}" | tee -a "$LOG_FILE"
     echo -e "$PRE_LOG${COLOR}$INPUT${NC}" | tee -a "$LOG_FILE"
 }
+
+## GENERATE RANDOM ACKNOWLEDGEMENT WORD
+acknowledge() {
+    $SPEAK "${ACKNOWLEDGEMENT_WORDS[$((RANDOM % ${#ACKNOWLEDGEMENT_WORDS[@]}))]}"
+}
+
+## GENERATE RANDOM LISTENING WORD
+listening() {
+    $SPEAK "${LISTENING_WORDS[$((RANDOM % ${#LISTENING_WORDS[@]}))]}"
+}
+## GENERATE RANDOM CLOSING WORD
+closing() {
+    $SPEAK "${CLOSING_WORDS[$((RANDOM % ${#CLOSING_WORDS[@]}))]}"
+}
+## GENERATE RANDOM CONFUSED WORD
+#confused() {
+#    $SPEAK "${CONFUSED_WORDS[$((RANDOM % ${#CONFUSED_WORDS[@]}))]}"
+#}
 
 
 # --- BACKGROUND SCRIPTS ---
@@ -47,10 +78,7 @@ if ! pgrep -fx "bash $ALARMS_SCRIPT" >/dev/null; then
 fi
 
 
-# --- THE MAX ---
-echo " 🤖 | Max:"
-echo "───────────"
-log NC "Max started."
+# --- MAIN COMMAND HANDLER ---
 handle_command() {
     local cmd="$1"
 
@@ -72,8 +100,7 @@ handle_command() {
         LAST_COMMAND_TIME=$(date +%s)
         CURRENT_VOLUME=$(pactl get-sink-volume @DEFAULT_SINK@ | awk '{print $5}' | head -n1)
         pactl set-sink-volume @DEFAULT_SINK@ $LISTEN_VOLUME
-        log GREEN "Listening..."
-        $SPEAK "yes sir?"
+        log GREEN "Listening..."; listening &
         return 0
     fi
 
@@ -87,8 +114,7 @@ handle_command() {
     local now=$(date +%s)
     if (( now - LAST_COMMAND_TIME > TIMEOUT )); then
         LISTEN_MODE=0
-        log YELLOW "Timeout. Exiting..."
-        $SPEAK "timeout"
+        log YELLOW "Timeout. Exiting..."; $SPEAK "timeout"
         pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
         return 0
     fi
@@ -97,75 +123,65 @@ handle_command() {
     # --- EXIT WORD ---
     if [[ "$cmd" == *"thanks"* || "$cmd" == *"thank you"* || "$cmd" == *"nothing"* || "$cmd" == *"never mind"* ]]; then
         LISTEN_MODE=0
-        log GREEN "Exiting..."
-        $SPEAK "you're welcome"
+        log GREEN "Exiting..."; closing &
         pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
         return 0
     fi
 
     # --- COMMANDS ---
     case "$cmd" in
-        # --- SPOTIFY ---
+        # --- PLAYBACK ---
         *"play"*)
-            log GREEN "Playing music..."
-            $SPEAK "playing" &
+            log GREEN "Playing music..."; $SPEAK "playing" &
             playerctl play
             pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
             LISTEN_MODE=0
             return 0
             ;;
         *"pause"*|*"stop"*|*"shut up"*)
-            log GREEN "Stopping playback..."
-            $SPEAK "okay" &
+            log GREEN "Stopping playback..."; acknowledge &
             playerctl stop
             pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
             LISTEN_MODE=0
             return 0
             ;;
         *"skip"*|*"skin"*)
-            log GREEN "Skipping..."
-            $SPEAK "okay" &
+            log GREEN "Skipping..."; acknowledge &
             playerctl next
             ;;
         *"volume up"*)
-            log GREEN "Turning volume up..."
-            $SPEAK "turning volume up" &
+            log GREEN "Turning volume up..."; $SPEAK "turning volume up" &
             pactl set-sink-volume @DEFAULT_SINK@ +25%
             CURRENT_VOLUME=$(pactl get-sink-volume @DEFAULT_SINK@ | awk '{print $5}' | head -n1)
             LISTEN_MODE=0
             return 0
             ;;
         *"volume down"*)
-            log GREEN "Turning volume down..."
-            $SPEAK "turning volume down" &
+            log GREEN "Turning volume down..."; $SPEAK "turning volume down" &
             pactl set-sink-volume @DEFAULT_SINK@ -25%
             CURRENT_VOLUME=$(pactl get-sink-volume @DEFAULT_SINK@ | awk '{print $5}' | head -n1)
             LISTEN_MODE=0
             return 0
             ;;
         *"reset"*|*"recent"*)
-            log GREEN "Resetting volume..."
-            $SPEAK "okay" &
-            pactl set-sink-volume @DEFAULT_SINK@ 90%
+            log GREEN "Resetting volume..."; acknowledge &
+            pactl set-sink-volume @DEFAULT_SINK@ 100%
             pactl set-sink-volume $(pactl list short sinks | awk '/hdmi/{print $2}') 100%
             playerctl volume 0.8 -p spotify
-            catt -d $TV volume 40
+            timeout 5 catt -d "$TV_IP" volume 40
             CURRENT_VOLUME=$(pactl get-sink-volume @DEFAULT_SINK@ | awk '{print $5}' | head -n1)
             LISTEN_MODE=0
             return 0
             ;;
-        "spotify"*)
-            cmd="${cmd#* }"
-echo "Heard: $cmd"
-            s_query_result=$(bash ~/scripts/max/s-query "$cmd")
-            log GREEN "Spotify: $s_query_result"
-            $SPEAK "okay" &
+        *"spotify"*)
+            cmd="${cmd#* }" # REMOVE FIRST WORD
+            acknowledge &
+            log GREEN "$(bash ~/scripts/max/s-query \"$cmd\")"
             ;;
 
         # --- LIGHTS ---
         *"lights on"*)
-            log GREEN "Turning on lights..."
-            $SPEAK "okay" &
+            log GREEN "Turning on lights..."; acknowledge
             node ~/scripts/tuya-control/remote.js bulb-1 on
             node ~/scripts/tuya-control/remote.js bulb-1 mode scene purplebulb
             node ~/scripts/tuya-control/remote.js bulb-2 on
@@ -178,8 +194,7 @@ echo "Heard: $cmd"
             return 0
             ;;
         *"lights off"*)
-            log GREEN "Turning off lights..."
-            $SPEAK "okay" &
+            log GREEN "Turning off lights..."; acknowledge &
             node ~/scripts/tuya-control/remote.js bulb-1 off
             node ~/scripts/tuya-control/remote.js bulb-2 off
             node ~/scripts/tuya-control/remote.js led off
@@ -191,8 +206,7 @@ echo "Heard: $cmd"
             return 0
             ;;
         *"color red"*)
-            log GREEN "Turning on red mode..."
-            $SPEAK "okay" &
+            log GREEN "Turning on red mode..."; acknowledge &
             node ~/scripts/tuya-control/remote.js bulb-1 on
             node ~/scripts/tuya-control/remote.js bulb-1 mode color red
             node ~/scripts/tuya-control/remote.js bulb-2 on
@@ -206,8 +220,7 @@ echo "Heard: $cmd"
             return 0
             ;;
         *"movie"*)
-            log GREEN "Turning on movie mode..."
-            $SPEAK "okay" &
+            log GREEN "Turning on movie mode..."; acknowledge &
             pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
             LISTEN_MODE=0
             playerctl stop
@@ -221,8 +234,7 @@ echo "Heard: $cmd"
             return 0
             ;;
         *"orange"*)
-            log GREEN "Turning on orange mode..."
-            $SPEAK "okay" &
+            log GREEN "Turning on orange mode..."; acknowledge &
             node ~/scripts/tuya-control/remote.js bulb-1 on
             node ~/scripts/tuya-control/remote.js bulb-1 mode color orangebulb
             node ~/scripts/tuya-control/remote.js bulb-2 on
@@ -232,8 +244,7 @@ echo "Heard: $cmd"
             node ~/scripts/tuya-control/remote.js pluh-1 on
             ;;
         *"ocean"*)
-            log GREEN "Turning on ocean mode..."
-            $SPEAK "okay" &
+            log GREEN "Turning on ocean mode..."; acknowledge &
             node ~/scripts/tuya-control/remote.js bulb-1 on
             node ~/scripts/tuya-control/remote.js bulb-1 mode color bluebulb
             node ~/scripts/tuya-control/remote.js bulb-2 on
@@ -243,8 +254,7 @@ echo "Heard: $cmd"
             node ~/scripts/tuya-control/remote.js pluh-1 on
             ;;
         *"hardcore"*)
-            log GREEN "Turning on hardcore mode..."
-            $SPEAK "okay" &
+            log GREEN "Turning on hardcore mode..."; acknowledge &
             node ~/scripts/tuya-control/remote.js bulb-1 on
             node ~/scripts/tuya-control/remote.js bulb-1 mode scene hardcore
             node ~/scripts/tuya-control/remote.js bulb-2 on
@@ -254,8 +264,7 @@ echo "Heard: $cmd"
             node ~/scripts/tuya-control/remote.js pluh-1 on
             ;;
         *"disco"*)
-            log GREEN "Turning on disco mode..."
-            $SPEAK "okay" &
+            log GREEN "Turning on disco mode..."; acknowledge &
             node ~/scripts/tuya-control/remote.js bulb-1 on
             node ~/scripts/tuya-control/remote.js bulb-1 mode scene disco
             node ~/scripts/tuya-control/remote.js bulb-2 on
@@ -265,8 +274,7 @@ echo "Heard: $cmd"
             node ~/scripts/tuya-control/remote.js pluh-1 on
             ;;
         *"white"*)
-            log GREEN "Turning on white mode..."
-            $SPEAK "okay" &
+            log GREEN "Turning on white mode..."; acknowledge &
             node ~/scripts/tuya-control/remote.js bulb-1 on
             node ~/scripts/tuya-control/remote.js bulb-1 mode white
             node ~/scripts/tuya-control/remote.js bulb-2 on
@@ -276,53 +284,32 @@ echo "Heard: $cmd"
             node ~/scripts/tuya-control/remote.js pluh-1 on
             ;;
         *"seizure"*|*"flash"*|*"flesh"*)
-            log GREEN "Turning on seizure mode..."
-            $SPEAK "okay" &
+            log GREEN "Turning on seizure mode..."; acknowledge &
             nohup node ~/scripts/tuya-control/remote.mjs >/dev/null 2>&1 &
             echo $! > /tmp/tuya-beat.pid
             ;;
         *"calm down"*)
-            log GREEN "Turning off seizure mode..."
-            $SPEAK "okay" &
+            log GREEN "Turning off seizure mode..."; acknowledge &
             kill $(cat /tmp/tuya-beat.pid) && rm -rf /tmp/tuya-beat.pid
             ;;
 
-        # --- CLI COMMANDS ---
-        *"lockin"*)
-            pactl set-sink-volume @DEFAULT_SINK@ 100%
-            playerctl volume 0.8
-            catt -d 192.168.1.4 volume 40
-            node ~/scripts/tuya-control/remote.js bulb-1 on
-            node ~/scripts/tuya-control/remote.js bulb-1 mode scene purplebulb
-            node ~/scripts/tuya-control/remote.js bulb-2 on
-            node ~/scripts/tuya-control/remote.js bulb-2 mode scene purplebulb
-            node ~/scripts/tuya-control/remote.js led on
-            node ~/scripts/tuya-control/remote.js led mode scene purpleled
-            node ~/scripts/tuya-control/remote.js pluh-1 on
-            ;;
+        # --- OTHER ---
         *"sheleft"*)
-            $SPEAK "she left" &
+            log GREEN "She left."; $SPEAK "she left" &
             node ~/scripts/tuya-control/remote.js bulb-1 mode scene flash_red_pink
             node ~/scripts/tuya-control/remote.js bulb-2 mode scene flash_red_pink
             sleep 5
             node ~/scripts/tuya-control/remote.js bulb-1 mode scene purplebulb
             node ~/scripts/tuya-control/remote.js bulb-2 mode scene purplebulb
             ;;
-
-        # --- OTHER ---
-        *"show bus"*|*"show boss"*)
-            xfce4-terminal -e "bash ~/scripts/ksk/bus -b 24 -f Kadaka -a kodu"
-            ;;
         *"kill"*)
-            log GREEN "Killing kiosk..."
-            $SPEAK "killing keyyawsk"
+            log GREEN "Killing kiosk..."; $SPEAK "killing keyyawsk"
             pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
             tmux kill-server
             ;;
         *"shut down"*|*"shot down"*|*"shut though"*|*"shot though"*)
-            log GREEN "Shutting down..."
-            $SPEAK "shutting down" &
-            timeout 5 ssh t-pm "sudo ddcutil setvcp 0xD6 4 2>/dev/null"
+            log GREEN "Shutting down..."; $SPEAK "shutting down" &
+            timeout 5 ssh t-pirukas "sudo ddcutil setvcp 0xD6 4 2>/dev/null"
             node ~/scripts/tuya-control/remote.js bulb-1 off
             node ~/scripts/tuya-control/remote.js bulb-2 off
             node ~/scripts/tuya-control/remote.js led off
@@ -330,20 +317,20 @@ echo "Heard: $cmd"
             node ~/scripts/tuya-control/remote.js pluh-2 off
             node ~/scripts/tuya-control/remote.js pluh-2 on
             playerctl stop -p spotify
-            adb shell input keyevent KEYCODE_SLEEP
+            adb -s "$TV_IP" shell input keyevent KEYCODE_SLEEP
             pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
             LISTEN_MODE=0
             return 0
             ;;
-        *"wake up")
+        *"wake up"*)
             log GREEN "Good morning..."
             pactl set-sink-volume @DEFAULT_SINK@ 40%
             playerctl volume 0.7 -p spotify
             $SPEAK "good morning!"
             playerctl next -p spotify
-            adb shell input keyevent KEYCODE_WAKEUP
-            timeout 5 ssh t-pm "sudo ddcutil setvcp 0xD6 1 2>/dev/null"
-            timeout 5 catt -d $DEVICE_IP volume 40
+            adb -s "$TV_IP" shell input keyevent KEYCODE_WAKEUP
+            timeout 5 ssh t-pirukas "sudo ddcutil setvcp 0xD6 1 2>/dev/null"
+            timeout 5 catt -d "$TV_IP" volume 40
             node ~/scripts/tuya-control/remote.js bulb-1 on
             node ~/scripts/tuya-control/remote.js bulb-1 mode color orangebulb
             node ~/scripts/tuya-control/remote.js bulb-2 on
@@ -361,9 +348,9 @@ echo "Heard: $cmd"
             playerctl volume 0.8 -p spotify
             $SPEAK "welcome back!"
             playerctl next -p spotify
-            adb shell input keyevent KEYCODE_WAKEUP
-            timeout 5 ssh t-pm "sudo ddcutil setvcp 0xD6 1 2>/dev/null"
-            timeout 5 catt -d $DEVICE_IP volume 40
+            adb -s "$TV_IP" shell input keyevent KEYCODE_WAKEUP
+            timeout 5 ssh t-pirukas "sudo ddcutil setvcp 0xD6 1 2>/dev/null"
+            timeout 5 catt -d "$TV_IP" volume 40
             node ~/scripts/tuya-control/remote.js bulb-1 on
             node ~/scripts/tuya-control/remote.js bulb-1 mode scene purplebulb
             node ~/scripts/tuya-control/remote.js bulb-2 on
@@ -376,8 +363,7 @@ echo "Heard: $cmd"
             tmux kill-server
             ;;
         *"project off"*|*"project of"*|*"projector off"*|*"projector of"*)
-            log GREEN "Turing off projector..."
-            $SPEAK "okay" &
+            log GREEN "Turing off projector..."; acknowledge &
             node ~/scripts/tuya-control/remote.js pluh-2 off
             node ~/scripts/tuya-control/remote.js pluh-2 on
             pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
@@ -388,12 +374,12 @@ echo "Heard: $cmd"
         "question"*)
             log GREEN "Question received..."
             echo "AI thinking..."
-            ai_answer=$(echo "answer with the least sentences possible: $cmd" | ollama run llama2)
-            log GREEN "$ai_answer"
-            $SPEAK "$ai_answer" &
+            ai_answer=$(echo "answer with the least sentences possible: $cmd" | ai)
+            log GREEN "$ai_answer"; $SPEAK "$ai_answer" &
             ;;
         *)
             log YELLOW "$cmd - Not a command."
+#            log YELLOW "$cmd - Not a command."; confused
             ;;
     esac
 }
@@ -412,6 +398,9 @@ fi
 
 
 # --- MAIN LOOP ---
+echo " 🤖 | Max:"
+echo "───────────"
+log NC "Max started."
 while read -r line; do
     if [[ "$line" == HEARD:* ]]; then
         command="${line#HEARD: }"
@@ -425,8 +414,7 @@ while read -r line; do
         done
         if (( matches > 0 )); then
             ((count+=matches))
-            log GREEN "MONKEYS: $count"
-            $SPEAK "[REMOVED]" &
+            log GREEN "MONKEYS: $count"; $SPEAK "$MONKEY_WORD" &
         fi
 
         handle_command "$command"
