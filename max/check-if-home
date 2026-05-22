@@ -1,18 +1,15 @@
 #!/bin/bash
+source ~/scripts/.env
 
 
 # --- CONFIG ---
-DEVICE_IP="192.168.1.4"
+DEVICE_IP=$TV_IP
 VOLUME_DOWN_AFTER_TIME="23"
 VOLUME_DOWN_UNTIL_TIME="11"
 VOLUME_DOWN_UNDER_VOL="75"
 MORING_AFTER_TIME="6"
 MORING_BEFORE_TIME="11"
-
-source ~/scripts/.env
-
-# --- VARS ---
-offline_delay=5
+# --- END OF CONFIG ---
 
 
 # --- FUNCS ---
@@ -64,11 +61,11 @@ while true; do
                 if (( CURRENT_HOUR >= MORING_AFTER_TIME && CURRENT_HOUR <= MORING_BEFORE_TIME )); then
                     log INFO "Running MORNING commands..."
                     # --- MORNING COMMANDS ---
-                    bash ~/scripts/max/max "wake up"
+                    bash ~/scripts/max/max "wake up (from max/check-if-home)"
                 else
                     log INFO "Running WELCOME commands..."
                     # --- WELCOME COMMANDS ---
-                    bash ~/scripts/max/max "im home"
+                    bash ~/scripts/max/max "im home (from max/check-if-home)"
                 fi
             else
                 log INFO "Did not run commands - spotify playing."
