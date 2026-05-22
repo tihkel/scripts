@@ -1,5 +1,5 @@
 #!/bin/bash
-echo "" > ~/bus.debug
+#echo "" > ~/bus.debug
 
 
 # --- CONFIG ---
@@ -151,7 +151,7 @@ while true; do
 
         # SKIP BANNED BUS ID
         if [[ "$BANNED_BUS_ID" == "$BUS_LINE_ID" ]]; then
-          echo "DEBUG: BUS $BUS_LINE_ID SKIPPED (BANNED)" >> ~/bus.debug
+#          echo "DEBUG: BUS $BUS_LINE_ID SKIPPED (BANNED)" >> ~/bus.debug
           continue
         fi
 
@@ -169,7 +169,7 @@ while true; do
 
 
         real_BUS_DISTANCE_IN_M=$(haversine_m "$BUS_LINE_LAT" "$BUS_LINE_LON" "$BUS_STOP_LAT" "$BUS_STOP_LON")
-        echo "DEBUG: real_BUS_DISTANCE_IN_M=$real_BUS_DISTANCE_IN_M" >> ~/bus.debug
+#        echo "DEBUG: real_BUS_DISTANCE_IN_M=$real_BUS_DISTANCE_IN_M" >> ~/bus.debug
 
         if awk -v a="$SQUARED_DISTANCE" -v b="$CLOSEST_DISTANCE" 'BEGIN {exit !(a < b)}'; then
             if awk -v d="$real_BUS_DISTANCE_IN_M" -v b="$BAN_DISTANCE" 'BEGIN {exit !(d > b)}'; then
@@ -219,8 +219,11 @@ while true; do
 #        BUS_DISTANCE_IN_M="?"
 #        BUS_ARRIVAL_ETA_IN_MIN="?"
 #        restart_label "$BUS_DISTANCE_IN_M" "$BUS_ARRIVAL_ETA_IN_MIN"
-
-        echo "ERROR: No matching busses found for: $BUS_NUM -> $BUS_DIRECTION_STOP"
+        clear
+        kill "$RED_DOT_PID" 2>/dev/null
+        kill "$LABEL_PID" 2>/dev/null
+        echo "ERROR: No matching busses found for:"
+        echo "  $BUS_NUM -> $BUS_DIRECTION_STOP"
         sleep 10
     fi
 done
