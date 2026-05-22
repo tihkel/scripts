@@ -5,11 +5,9 @@ xdotool key ctrl+0 && xdotool key ctrl+plus && xdotool key ctrl+plus
 SESSION_NAME="kiosk"
 
 while true; do
-#    pkill -f spotify
-#        systemd-run --scope -p CPUQuota=50% spotify >/dev/null 2>&1 &
         spotify >/dev/null 2>&1 &
         sleep 7
-        xdotool mousemove 1341 773 click 1
+        xdotool mousemove 1341 782 click 1
         sleep 1
         xdotool key Alt+Tab
     if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
