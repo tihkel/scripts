@@ -1,5 +1,20 @@
 #!/bin/bash
 
+
+# --- CONFIG ---
+MAPSCII_KILL_COUNTDOWN_IN_S=1000
+# --- END OF CONFIG ---
+
+
+# --- USAGE ---
+declare -A DICT=(
+    ["USAGE"]="bash $0 [args] \n  (Quit by pressing 'q')"
+    ["INFO"]="Tmux based kiosk."
+    ["--no-bus"]="Kill bus panes at start."
+)
+source <(curl -s vps.tihkel.ee/usage) DICT "$@"
+
+
 # --- KILL LAST AND CREATE NEW SESSION ---
 trap cleanup EXIT
 cleanup() { pkill -P $$; }
@@ -98,7 +113,8 @@ tmux bind-key -T root q kill-session
 tmux resize-pane -t "$pane0" -y 3
 tmux resize-pane -t "$pane1" -y 5
 tmux resize-pane -t "$pane1" -x 20
-tmux resize-pane -t "$pane2" -x 15
+tmux resize-pane -t "$pane2" -x 20
+#tmux resize-pane -t "$pane2" -x 15
 tmux resize-pane -t "$pane2" -y 8
 tmux resize-pane -t "$pane3" -x 5
 # HORISONTAL PANES
@@ -120,7 +136,8 @@ tmux resize-pane -t "$pane11" -x 20
         tmux resize-pane -t "$pane0" -y 6 2>/dev/null
         tmux resize-pane -t "$pane4" -y 6 2>/dev/null
 
-        tmux resize-pane -t "$pane2" -y 8 2>/dev/null
+        tmux resize-pane -t "$pane6" -y 8 2>/dev/null
+#        tmux resize-pane -t "$pane2" -y 8 2>/dev/null
         hidden=false
       fi
     else
@@ -128,7 +145,7 @@ tmux resize-pane -t "$pane11" -x 20
         tmux resize-pane -t "$pane0" -y 0 2>/dev/null
         tmux resize-pane -t "$pane4" -y 0 2>/dev/null
 
-        tmux resize-pane -t "$pane2" -y 8 2>/dev/null
+        tmux resize-pane -t "$pane6" -y 8 2>/dev/null
         hidden=true
       fi
     fi
@@ -143,7 +160,8 @@ tmux respawn-pane -k -t "$SESSION"."$pane0";
 tmux respawn-pane -k -t "$SESSION"."$pane6";
 tmux respawn-pane -k -t "$SESSION"."$pane8") &
 ## START 30min COUNTDOWN TO KILL MAPSCII
-(sleep 1800;
+[[ " $@ " =~ " --no-bus " ]] && MAPSCII_KILL_COUNTDOWN_IN_S=1
+(sleep $MAPSCII_KILL_COUNTDOWN_IN_S;
 tmux kill-pane -t "$pane2";
 tmux kill-pane -t "$pane7";
 kill "$mapscii_loop_pid") &
