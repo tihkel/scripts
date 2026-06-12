@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+
+source "$HOME/scripts/.env"
+
+set -euo pipefail
+
+mapfile -t ssh_aliases < <(
+    bash -ic 'sshl() { alias | grep "ssh.=" | awk '\''{$1=""; print substr($0,2)}'\''; }; sshl' 2>/dev/null | grep -E "^ssh[^=]*='ssh .+'$"
+)
+
+if [[ ${#ssh_aliases[@]} -eq 0 ]]; then
+    echo 'No SSH aliases were returned by sshl.' >&2
+    exit 1
+fi
+
+session="ssh-update-$(date +%Y%m%d-%H%M%S)"
+
+first_alias_line=${ssh_aliases[0]}
+first_ssh_cmd=${ssh_aliases[0]#*=}
+first_ssh_cmd=${first_ssh_cmd#\'}
+first_ssh_cmd=${first_ssh_cmd%\'}
+first_target=${first_ssh_cmd#ssh }
+
+printf -v first_pane_cmd 'trap "exit 130" INT; if ssh -t %q %q; then echo -e %q; read -r; else status=$?; if [ "$status" -eq 130 ]; then exit 130; fi; echo -e %q; read -r; fi' "$first_target" "sudo apt update && sudo apt upgrade" "\n${GREEN:-}[DONE]${NC:-$'\033[0m'}\n" "\n${YELLOW:-}[STOPPED]${NC:-$'\033[0m'}\n"
+tmux new-session -d -s "$session" -n updates "bash -lc $(printf %q "$first_pane_cmd")"
+tmux bind-key -n q kill-session -t "$session"
+tmux set-hook -g session-closed 'unbind-key -n q'
+tmux set-option -t "$session" mouse on
+tmux set-option -t "$session" pane-border-status top
+tmux set-option -t "$session" pane-border-format ' #{pane_title} '
+tmux select-pane -t "$session:0.0" -T "$first_alias_line"
+
+for ssh_alias in "${ssh_aliases[@]:1}"; do
+    ssh_cmd=${ssh_alias#*=}
+    ssh_cmd=${ssh_cmd#\'}
+    ssh_cmd=${ssh_cmd%\'}
+    ssh_target=${ssh_cmd#ssh }
+
+    printf -v pane_cmd 'trap "exit 130" INT; if ssh -t %q %q; then echo -e %q; read -r; else status=$?; if [ "$status" -eq 130 ]; then exit 130; fi; echo -e %q; read -r; fi' "$ssh_target" "sudo apt update && sudo apt upgrade" "\n${GREEN:-}[DONE]${NC:-$'\033[0m'}\n" "\n${YELLOW:-}[STOPPED]${NC:-$'\033[0m'}\n"
+    pane_id=$(tmux split-window -t "$session:0" -d -P -F '#{pane_id}' "bash -lc $(printf %q "$pane_cmd")")
+    tmux select-pane -t "$pane_id" -T "$ssh_alias"
+    tmux select-layout -t "$session:0" tiled >/dev/null
+done
+
+if [[ -n ${TMUX:-} ]]; then
+    tmux switch-client -t "$session"
+else
+    tmux attach -t "$session"
+fi
