@@ -5,8 +5,27 @@
 # --- NOT INTERACTIVE SHELL ---
 BASHRC_CONF=$(cat <<'EOF'
 #! --- BASHRC --- !#
+
+# INTERACTIVE SHELL CHECK
 if [[ $- == *i* ]]; then
-    source <(curl -s vps.tihkel.ee/bashrc)
+    # NETWORK CHECK
+    internet_host="1.1.1.1"
+    dns_host="vps.tihkel.ee"
+    ## INTERNET
+    if ! timeout 3 ping -c 1 "${internet_host}" >/dev/null 2>&1; then
+        echo "[-] Internet unreachable for: ${internet_host}"
+        echo
+    ## DNS
+    elif [ -z "$(timeout 3 dig +short "${dns_host}")" ]; then
+        echo "[-] DNS not resolving for: ${dns_host}"
+        grep '^nameserver ' /etc/resolv.conf | while read -r line; do
+            echo "    ${line}"
+        done
+        echo
+    # SOURCE
+    else
+        source <(curl -s vps.tihkel.ee/bashrc)
+    fi
 fi
 EOF
 )
@@ -77,20 +96,32 @@ fi
 
 # --- APT UPDATE ---
 update_check_tmpdir="/tmp"
+
+# CHECK WHAT TMP DIR CAN BE USED
 touch "$update_check_tmpdir/.write-test" 2>/dev/null || update_check_tmpdir="../usr/tmp"
-rm -f "$update_check_tmpdir/.write-test" 2>/dev/null
+rm -f $update_check_tmpdir/.write-test 2>/dev/null
+
+# CHECK IF UPDATE ALREADY DONE
 update_check_tmpfile="update-check-$(date +%Y-%m-%d).tmp"
+updates_available_tmpfile="updates-available-$(date +%Y-%m-%d).tmp"
+## IF UPDATE CHECK NOT DONE YET
 if [ ! -f "$update_check_tmpdir/$update_check_tmpfile" ]; then
-    rm -f "$update_check_tmpdir/update-check-*.tmp"
-    echo "Checking for updates..."
-    apt update >/dev/null 2>&1 || sudo apt update >/dev/null 2>&1
-    if apt list --upgradable 2>/dev/null | grep -i -v "listing" -q; then
-        echo "Updates available. Running update and upgrade..."
-        (apt upgrade -y 2>/dev/null || sudo apt upgrade -y) && (touch "$update_check_tmpdir/$update_check_tmpfile" 2>/dev/null || touch "../usr/tmp/$update_check_tmpfile")
-#        apt upgrade -y || sudo apt upgrade -y && touch "$update_check_tmpfile"
-        echo
+    if [ ! -f "$update_check_tmpdir/$updates_available_tmpfile" ]; then
+        rm -f $update_check_tmpdir/update-check-*.tmp
+        rm -f $update_check_tmpdir/updates-available-*.tmp
+        echo "Checking for updates..."
+        apt update >/dev/null 2>&1 || sudo apt update >/dev/null 2>&1
+        if apt list --upgradable 2>/dev/null | grep -i -v "listing" -q; then
+            echo "Updates available." && touch "$update_check_tmpdir/$updates_available_tmpfile"
+    #        echo "Updates available. Running update and upgrade..."
+    #        (apt upgrade -y 2>/dev/null || sudo apt upgrade -y) && touch "$update_check_tmpdir/$update_check_tmpfile"
+            echo
+        else
+            echo "No updates available today." && touch "$update_check_tmpdir/$update_check_tmpfile"
+            echo
+        fi
     else
-        echo "No updates available today." && (touch "$update_check_tmpdir/$update_check_tmpfile" 2>/dev/null || touch "../usr/tmp/$update_check_tmpfile")
+        echo "Updates available."
         echo
     fi
 fi
@@ -175,6 +206,7 @@ HISTSIZE=1000
 HISTFILESIZE=2000
 shopt -s checkwinsize
 HISTCONTROL=ignoreboth
+export HISTTIMEFORMAT=$'\e[35m[%F %T]:\e[0m\n'
 
 
 # --- DIR COLORS ---
@@ -312,17 +344,16 @@ fi
 
 
 # --- CRONTAB ---
-the_CJ="0 4 * * * curl -s vps.tihkel.ee/home_dir_backup | USER=\"$USER\" bash > /tmp/$USER_home_dir_backup.log 2>&1"
+the_CJ="0 4 * * * curl -s vps.tihkel.ee/home_dir_backup | USER=\"$USER\" bash > /tmp/${USER}_home_dir_backup.log 2>&1"
 #the_CJ="0 4 * * * BACKUP_DIR=/home/$USER/backups; MAX_BACKUPS=1; DATE=\$(date +\%F_\%H-\%M-\%S); mkdir -p \"\$BACKUP_DIR\"; tar --exclude=\"$USER/backups\" --exclude=\"$USER/vms\" --exclude=\"$USER/t-nas\" -czf \"\$BACKUP_DIR/\${DATE}_home_dir_backup_for_$USER@\$(hostname).tar.gz\" -C /home $USER >/dev/null; ls -1t \"\$BACKUP_DIR\" | tail -n +\$((MAX_BACKUPS+1)) | xargs -r -I {} rm -- \"\$BACKUP_DIR/{}\""
 
-if [ "$(hostname)" = "t-k-debian" ]; then
-    the_CJ+=$'\n*/30 * * * * bash /home/tihkel/scripts/external_ip_check'
+if [ "$(hostname)" = "t-pirukas" ]; then
+    the_CJ+=$'\n*/5 * * * * curl -s vps.tihkel.ee/external_ip_check | bash > /tmp/external_ip_check.log'
 fi
 # CHECK IF CRON EXISTS
 if command -v crontab >/dev/null 2>&1; then
-#if [ -n "$(command -v crontab >/dev/null 2>&1)" ]; then
     if ! diff -q <(crontab -l 2>/dev/null) <(printf '%s\n' "$the_CJ") >/dev/null; then
-        echo "Updating home dir backup cronjob..."
+        echo "Updating cronjobs..."
         echo "$the_CJ" | crontab -
         echo
     fi
@@ -571,6 +602,8 @@ XBINDKEYS_CONF=$(cat <<EOF
   Alt + c
 "xfce4-terminal"
   Alt + q
+"bash /home/$USER/scripts/toggle-brightness.sh"
+  Alt + b
 EOF
 )
 if [ -n "$DISPLAY" ]; then
@@ -646,12 +679,16 @@ PROMPT_COMMAND="echo -ne '\e[6 q'"
 
 # --- ALIASES ---
 # SSH
-alias sshs="ssh tihkel@t-pm.vpn"
+alias sshs="ssh tihkel@t-pm"
 alias sshk="ssh tihkel@t-k-debian.vpn"
 alias sshp="ssh tihkel@t-pirukas.vpn"
 alias sshv="ssh tihkel@t-v-debian.vpn"
 alias sshu="ssh debian@vps.tihkel.ee"
 alias ssht="ssh virt135310@tihkel.ee"
+alias sshm="ssh tihkel@t-lap.vpn"
+alias sshlocal="ssh -p 2222 tihkel@localhost"
+alias killsshlocal="kill $(ps aux | grep ssh | grep localhost | awk '{print $2}')"
+
 sshl() {
     alias | grep "ssh.=" | awk '{$1=""; print substr($0,2)}'
 }
@@ -702,7 +739,8 @@ tun() {
                     pactl load-module module-loopback source=remote.monitor sink=alsa_output.pci-0000_00_1f.3.analog-stereo latency_msec=255 tsched=0
                 fi
             else
-                pactl load-module module-tunnel-sink server=t-k-debian sink_name=remote latency_msec=130 tsched=0
+                pactl load-module module-tunnel-sink server=t-k-debian.vpn sink_name=remote latency_msec=200 rate=48000 channels=2
+                #pactl load-module module-tunnel-sink server=t-k-debian.vpn sink_name=remote latency_msec=130 tsched=0
                 pactl set-default-sink remote 2>/dev/null
             fi
             ;;
@@ -745,20 +783,22 @@ alias skip="sshk playerctl next -p spotify"
 termcall() (
 
     ## SETTINGS
+    local RECEIVER_USER="tihkel"
+    local RECEIVER_HOST="$1"
     local RECEIVER_MIC=""
+    [[ *"$RECEIVER_HOST"* =~ "t-k-debian" ]] && local RECEIVER_MIC="AT2020" || local RECEIVER_MIC=""
     local RECEIVER_OUTPUT=""
     local CALL_FILE="$HOME/mic.opus"
     [ -f ~/scripts/.env ] || local SPEAK="espeak-ng -g6"
     local NOTIFY_START="$SPEAK 'incoming terminal call'"
     local NOTIFY_END="$SPEAK 'terminal call disconnected'"
-    local RECEIVER_USER="tihkel"
-    local RECEIVER_HOST="$1"
 
     ## === DO NOT EDIT === ##
     set +m
     ## --listen-in
     if [[ "$*" == *"--listen-in"* ]]; then
         local NOTIFY_START="sleep 2; echo '[MUTED] Call started.'"
+        echo "[MUTED] Call started."
         local NOTIFY_END="echo '[MUTED] Call ended.'"
     fi
 
@@ -798,8 +838,9 @@ alias ns="bash <(curl -s vps.tihkel.ee/ns)"
 alias space="bash <(curl -s vps.tihkel.ee/space)"
 alias disk="bash <(curl -s vps.tihkel.ee/disk)"
 alias inodes="bash <(curl -s vps.tihkel.ee/inodes)"
-alias wp-to-zone.ssh.j="bash <(curl -s vps.tihkel.ee/wp-to-zone.ssh.j)"
 alias gboot="bash <(curl -s vps.tihkel.ee/gboot)"
+alias logs="bash <(curl -s vps.tihkel.ee/logs)"
+alias tmux-update="bash <(curl -s vps.tihkel.ee/tmux-update)"
 
 ## LOCAL SCRIPTS
 alias ksk="bash ~/scripts/ksk/ksk"
@@ -814,16 +855,14 @@ alias oc="~/.opencode/bin/opencode"
 max() {
     ssh tihkel@t-k-debian.vpn "bash ~/scripts/max/max '$*'"
 }
-pivpn() {
-    ssh tihkel@t-pirukas.vpn "pivpn '$*'"
-}
+alias setalarm="setsid ssh tihkel@t-k-debian bash ~/scripts/max/alarms"
 
 # CUSTOM SYSTEM COMMANDS
 alias ..="cd .."
 alias la="ls -lah"
 alias ip="ip -c"
 alias search="sudo find / 2>/dev/null | grep"
-alias update="sudo apt update && sudo apt upgrade"
+alias update="sudo apt update && sudo apt upgrade && rm -f /tmp/updates-available-*.tmp && touch /tmp/update-check-$(date +%Y-%m-%d).tmp"
 lst() {
   local path="."
   local depth="1"
@@ -856,6 +895,10 @@ hostname() {
     else
         command hostname "$@"
     fi
+}
+
+history() {
+  builtin history "$@" | sed 's/^[[:space:]]*[0-9]\+[[:space:]]*//'
 }
 
 whois_func() {
@@ -920,26 +963,6 @@ alias whois='whois_func'
 
 
 # OTHER
-gitd() {
-    git fetch
-
-    local local="$(git diff --name-only; git ls-files --others --exclude-standard)";
-    local remote=$(git diff --name-only HEAD..origin/main)
-    local deleted=$(git diff --name-only --diff-filter=D HEAD..origin/main)
-
-    for f in $(printf "%s\n%s\n" "$local" "$remote" | sort -u); do
-      if echo "$deleted" | grep -qx "$f"; then
-        echo -e "\e[90m$f\e[0m"   # gray = deleted on remote
-      elif echo "$local" | grep -qx "$f" && echo "$remote" | grep -qx "$f"; then
-        echo -e "\e[33m$f\e[0m"   # yellow = overlap
-      elif echo "$local" | grep -qx "$f"; then
-        echo -e "\e[31m$f\e[0m"   # red = local only
-      else
-        echo -e "\e[32m$f\e[0m"   # green = remote only
-      fi
-    done
-}
-
 t-vpn() {
     case "$1" in
         up) sudo wg-quick up t-vpn ;;
@@ -956,7 +979,7 @@ disp() {
         xrandr \
             --output "$PRIMARY" --auto --mode 1920x1080 \
             --output "$DELL" --auto --mode 1920x1080 --above "$PRIMARY" \
-            --output "$PROJECTOR" --auto --mode 1920x1080 --same-as "$PRIMARY"
+            #--output "$PROJECTOR" --auto --mode 1920x1080 --same-as "$DELL"
     elif [[ "$CMD" == "off" ]]; then
         xrandr \
             --output "$DELL" --off
@@ -969,10 +992,14 @@ disp() {
     kill -9 $$
 }
 
+gip() {
+    curl -s ipinfo.io/$1 | jq
+}
+
 alias src="clear && cd && source ~/.bashrc"
 alias copy="xclip -selection clipboard"
 alias ai="ollama run llama2"
-alias speak="espeak-ng -v en-gb-x-rp"
+alias speak='source ~/scripts/.env; $SPEAK'
 alias asd="cmatrix -C magenta -u 6"
 alias nc-host="nc -lvnp 4444"
 alias cam="cam -c 1 --capture --sdl"
@@ -981,6 +1008,8 @@ alias cattt="catt -d 192.168.1.4"
 alias adbt="adb connect t-teler"
 alias dol="dolphin"
 alias rnd="openssl rand -base64 12"
+alias maps="node ~/mapscii/main.js"
+alias gitd="git fetch; git status --short"
 
 
 

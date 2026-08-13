@@ -2,10 +2,10 @@
 
 
 # --- CONF ---
-REMOTE_HOST="tihkel@t-pirukas"
-REMOTE_DIR="t-nas/backups"
+REMOTE_HOST="virt135310@tihkel.ee"
+REMOTE_DIR="domeenid/www.tihkel.ee/zoneplus_snapshots/custom/backups"
 MAX_BACKUPS=2
-EXCLUDE_DIRS=("$USER/backups" "$USER/vms" "$USER/t-nas")
+EXCLUDE_DIRS=("$USER/jellyfin/media" "$USER/.cache/spotify")
 FILENAME="$(date +%F_%H-%M-%S)_home_dir_backup_for_$USER@$(hostname).tar.gz"
 ## OPTIONAL
 LOCAL_BACKUPS_DIR="$HOME/backups"
@@ -19,7 +19,7 @@ done
 
 
 # --- MANAGE LOCAL BACKUPS ---
-if [[ "$(hostname)" == "t-vps" ]]; then
+if [[ "$(hostname)" == "t-vps.disabled" ]]; then
     mkdir -p "$LOCAL_BACKUPS_DIR"
 
     BACKUP_COUNT=$(ls -1 $LOCAL_BACKUPS_DIR/*_for_$USER@$(hostname).tar.gz 2>/dev/null | wc -l)

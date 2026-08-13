@@ -1,0 +1,34 @@
+#!/bin/bash
+source ~/scripts/.env
+
+# --- SETTINGS ---
+IP_CHECK_EMAIL="info@tihkel.ee"
+IP_CHECK_USERNAME="tihkel"
+IP_CHECK_DOMAIN="vpn.tihkel.ee"
+IP_CHECK_MAIN_DOMAIN="${IP_CHECK_DOMAIN#*.}"
+AUTH=$(echo -n "$IP_CHECK_USERNAME:$MY_ZONE_API_KEY" | base64)
+
+# --- COLLECT VAR's ---
+RECORD_ID=$(curl -s -H "Authorization: Basic $AUTH" \
+"https://api.zone.eu/v2/dns/$IP_CHECK_MAIN_DOMAIN/a" \
+| jq -r --arg domain "$IP_CHECK_DOMAIN" '.[] | select(.name==$domain) | .id')
+CURRENT_IP=$(curl -s ipinfo.io | jq -r .ip)
+#CURRENT_IP=$(curl -s ifconfig.me)
+LAST_IP=$(dig +short $IP_CHECK_DOMAIN A | head -n1 2>/dev/null || echo '')
+
+# --- CHECK IF IP HAS CHANGED ---
+if [ "$CURRENT_IP" != "$LAST_IP" ]; then
+
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] Updating Zone DNS for $IP_CHECK_DOMAIN to $CURRENT_IP..."
+    RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}\n" -X PUT "https://api.zone.eu/v2/dns/$IP_CHECK_MAIN_DOMAIN/a/$RECORD_ID" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Basic $AUTH" \
+        -d "{\"name\": \"$IP_CHECK_DOMAIN\", \"destination\": \"$CURRENT_IP\"}")
+
+    echo "$RESPONSE"
+
+    echo -e "Subject: New t-router IP: $CURRENT_IP\n\nThe last t-router IP ($LAST_IP) was changed.\nNew IP: $CURRENT_IP" \
+    | msmtp "$IP_CHECK_EMAIL"
+else
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] IP has not changed. Current IP: $CURRENT_IP"
+fi
