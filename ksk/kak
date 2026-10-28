@@ -1,13 +1,21 @@
 #!/bin/bash
 clear
-xdotool key ctrl+0 && xdotool key ctrl+plus && xdotool key ctrl+plus
+sleep 2 && xdotool key ctrl+0 && xdotool key ctrl+KP_Add && xdotool key ctrl+KP_Add && xdotool key ctrl+KP_Add && xdotool key ctrl+KP_Add && xdotool key ctrl+KP_Add
 
 SESSION_NAME="kiosk"
 
 while true; do
-        spotify >/dev/null 2>&1 &
-        sleep 7
-        xdotool mousemove 1341 782 click 1
+        spotify --ignore-gpu-blocklist --enable-gpu-rasterization --enable-zero-copy --ozone-platform=x11 >/dev/null 2>&1 &
+        sleep 5
+        wmctrl -r :ACTIVE: -b add,fullscreen
+        sleep 5
+        xdotool mousemove 3813 2120 click 1
+        xdotool mousemove 3813 2100 click 1
+        xdotool mousemove 3813 2140 click 1
+# NEWER OLD
+#        xdotool mousemove 2093 1502 click 1
+#OLD
+#        xdotool mousemove 1341 782 click 1
         sleep 1
         xdotool key Alt+Tab
     if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then

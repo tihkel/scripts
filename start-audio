@@ -1,71 +1,108 @@
 #!/bin/bash
 
+# Dynamic multi-sink PipeWire/PulseAudio setup.
+# Add sinks by appending to SINK_PATTERNS and matching DELAYS_MS entry.
+
+set -euo pipefail
 
 # --- CONFIG ---
-## MAIN SINK
-SINK_A=$(pactl list short sinks | grep hdmi-surround | awk '{print $2}')
-## SECONDARY SINK
-SINK_B=$(pactl list short sinks | grep GeneralPlus_USB_Audio_Device | awk '{print $2}')
-DELAY_B=160
+# Match patterns used to find sink names from `pactl list short sinks`.
+SINK_PATTERNS=(
+    "hdmi-surround"
+    "usb-audio-technica_AT2020USB"
+    "GeneralPlus_USB_Audio_Device"
+)
 
+# Delay per sink in milliseconds (same order as SINK_PATTERNS).
+DELAYS_MS=(
+    0
+    230
+    230
+)
+
+COMBINED_SINK_NAME="COMB"
+COMBINED_DESCRIPTION="Combined_Output"
+COMBINED_CHANNELS=6
 
 # --- LOGGING ---
 log() {
     echo "[INFO] $*"
 }
+warn() {
+    echo "[WARN] $*" >&2
+}
 error() {
-    echo "[ERROR] $*"
+    echo "[ERROR] $*" >&2
 }
 
-
-## --- CHECK IF SINKS WERE FOUND ---
-if [ -z "$SINK_A" ] || [ -z "$SINK_B" ]; then
-    error "One of the sinks was not found."
+# --- VALIDATION ---
+if [ "${#SINK_PATTERNS[@]}" -eq 0 ]; then
+    error "No sink patterns configured."
     exit 1
 fi
 
+if [ "${#SINK_PATTERNS[@]}" -ne "${#DELAYS_MS[@]}" ]; then
+    error "SINK_PATTERNS and DELAYS_MS must have the same number of entries."
+    exit 1
+fi
 
-# --- CONVERT MS to MICROSECONDS ---
-DELAY_US=$(($DELAY_B * 1000))
+# --- KILL SPOTIFY ---
+pkill -f spotify || true
 
+# --- RESET KIOSK ---
+bash ~/scripts/max/max "kill"
+
+# Resolve configured patterns to sink names.
+SINKS=()
+ACTIVE_DELAYS_MS=()
+for i in "${!SINK_PATTERNS[@]}"; do
+    pattern="${SINK_PATTERNS[$i]}"
+    delay="${DELAYS_MS[$i]}"
+    sink=$(pactl list short sinks | awk -v pat="$pattern" '$0 ~ pat {print $2; exit}')
+    if [ -z "$sink" ]; then
+        warn "Sink not found for pattern: $pattern"
+        continue
+    fi
+    SINKS+=("$sink")
+    ACTIVE_DELAYS_MS+=("$delay")
+done
+
+if [ "${#SINKS[@]}" -eq 0 ]; then
+    error "No configured sinks were found."
+    exit 1
+fi
 
 # --- RESTART PIPEWIRE ---
-log "Restarting pipwire..."
+log "Restarting pipewire..."
 systemctl --user restart pipewire pipewire-pulse wireplumber
 sleep 2
 
-
-# --- DISCOVERING SINKS FOR MORE DEPENDANT CONNECTION ---
+# --- WAIT FOR ALL SINKS ---
 log "Waiting for PulseAudio sinks..."
-while ! pactl list short sinks | grep -q "$SINK_A"; do sleep 1; done
-while ! pactl list short sinks | grep -q "$SINK_B"; do sleep 1; done
+for sink in "${SINKS[@]}"; do
+    while ! pactl list short sinks | awk '{print $2}' | grep -qx "$sink"; do
+        sleep 1
+    done
+done
 log "Sinks found."
 
-
-# --- KILL ALL PREVIOUS ATTEMPTS (sinks) ---
-pactl unload-module module-null-sink 2>/dev/null
-pactl unload-module module-loopback 2>/dev/null
-pactl unload-module module-ladspa-sink 2>/dev/null
-pactl unload-module module-combine-sink 2>/dev/null
-
+# --- CLEAN PREVIOUS ATTEMPTS ---
+pactl unload-module module-null-sink 2>/dev/null || true
+pactl unload-module module-loopback 2>/dev/null || true
+pactl unload-module module-ladspa-sink 2>/dev/null || true
+pactl unload-module module-combine-sink 2>/dev/null || true
 
 # --- CREATE CUSTOM COMBINED SINK ---
-COMBINED=$(pactl load-module module-null-sink sink_name=COMB channels=6 sink_properties=device.description="Combined_Output")
+COMBINED=$(pactl load-module module-null-sink     sink_name="$COMBINED_SINK_NAME"     channels="$COMBINED_CHANNELS"     sink_properties=device.description="$COMBINED_DESCRIPTION")
 
+# --- ADD LOOPBACKS TO COMBINED SINK ---
+for i in "${!SINKS[@]}"; do
+    sink="${SINKS[$i]}"
+    delay="${ACTIVE_DELAYS_MS[$i]}"
+    pactl load-module module-loopback source="$COMBINED_SINK_NAME.monitor" sink="$sink" latency_msec="$delay" >/dev/null
+    log "Attached sink '$sink' with delay ${delay}ms"
+done
 
-# --- ADD BOTH LOOP DEVICES TO COMBINED SINK ---
-LOOP_A=$(pactl load-module module-loopback source=COMB.monitor sink="$SINK_A" latency_msec=0)
-LOOP_B=$(pactl load-module module-loopback source=COMB.monitor sink="$SINK_B" latency_msec=$DELAY_B)
-
-
-# --- MAKE COMBINED SINK AS THE DEFAULT OUTPUT ---
-log "Running COMBINED SINK as deafault output..."
-pactl set-default-sink COMB
-
-
-# --- KILL SPOTIFY ---
-pkill -f spotify
-
-
-# --- RESET KIOSK
-bash ~/scripts/max/max "kill"
+# --- SET DEFAULT OUTPUT ---
+log "Setting $COMBINED_SINK_NAME as default output..."
+pactl set-default-sink "$COMBINED_SINK_NAME"

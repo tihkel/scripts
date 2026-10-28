@@ -48,6 +48,9 @@ while true; do
         pactl set-sink-volume @DEFAULT_SINK@ "$VOLUME_DOWN_UNDER_VOL%"
         timeout 5 catt -d $DEVICE_IP volume 40
         $SPEAK "it's getting late, turning volume down"
+        node ~/scripts/tuya-control/remote.js bulb-1 mode color orangebulb
+        node ~/scripts/tuya-control/remote.js bulb-2 mode color orangebulb
+        node ~/scripts/tuya-control/remote.js led mode color orangeled
     fi
 
     # DEVICE STATUS CHANGE AFFECTS
@@ -83,8 +86,7 @@ while true; do
             node ~/scripts/tuya-control/remote.js led off
             node ~/scripts/tuya-control/remote.js pluh-1 off
             node ~/scripts/tuya-control/remote.js pluh-2 off
-            node ~/scripts/tuya-control/remote.js pluh-2 on
-            node ~/scripts/tuya-control/remote.js bulb-1 off
+            (sleep 60; node ~/scripts/tuya-control/remote.js bulb-1 off) &
             node ~/scripts/tuya-control/remote.js bulb-2 off
 
             WAS_ONLINE=0

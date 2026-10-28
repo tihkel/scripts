@@ -10,7 +10,8 @@ from vosk import Model, KaldiRecognizer
 # --- SETTINGS ---
 MODEL_PATH = os.path.expanduser("~/scripts/max/model")
 MIC = "AT2020USB+"
-MIC_RATE = 44100
+MIC_RATE = 48000
+#MIC_RATE = 44100
 VOSK_RATE = 16000
 
 q = queue.Queue()

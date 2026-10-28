@@ -38,22 +38,22 @@ tmux split-window -v -t "$pane1" 'bash ~/scripts/ksk/bus -b 24 -d Estonia -s kod
 pane2=$(tmux display-message -p "#{pane_id}")
 # LINE3
 tmux select-layout -t "$SESSION" even-vertical >/dev/null 2>&1
-tmux split-window -v -t "$pane2" 'bash ~/scripts/ksk/timers'
+tmux split-window -v -t "$pane2" 'watch -ctn10 "msg=\$(curl -s https://uselessfacts.jsph.pl/api/v2/facts/random?language=en | jq -r .text); cols=\$(tput cols); printf \"%*s\n\" \$(( (\${#msg} + cols) / 2 )) \"\$msg\""'
 pane3=$(tmux display-message -p "#{pane_id}")
 # LINE4
 tmux select-layout -t "$SESSION" even-vertical >/dev/null 2>&1
-tmux split-window -v -t "$pane3" 'watch -ctn60 "ssh t-pirukas \"pivpn -c | grep -v '"'"'Connected Clients List'"'"' | grep -v '"'"'Disabled clients'"'"'\""'
+tmux split-window -v -t "$pane3" 'cava'
 pane4=$(tmux display-message -p "#{pane_id}")
 # SET EQUAL SPACING
 tmux select-layout -t "$SESSION" even-vertical
 # --- HORISONTAL SPLIT PANES ---
 # | FOR LINE2
 # PANE5
-cmd_pane5='watch -ctn5 "w | grep -v tmux | awk '\''NR>1 {printf \"%-7s %-6s %-14s %-6s %-6s %-0s\n\",\$1,\$2,\$3,\$4,\$5,\$8}'\''"'
-tmux split-window -h -t "$pane1" "$cmd_pane5"
+tmux split-window -h -t "$pane1" 'bash ~/scripts/ksk/s-lyric'
+#tmux split-window -h -t "$pane1" "$cmd_pane5"
 pane5=$(tmux display-message -p "#{pane_id}")
 # PANE11
-tmux split-window -h -t "$pane5" 'watch -ctn10 bash ~/scripts/ksk/gmail && read'
+tmux split-window -h -t "$pane5" 'watch -ctn10 bash ~/scripts/ksk/mymail && read'
 pane11=$(tmux display-message -p "#{pane_id}")
 # PANE10
 #cmd_pane10='watch -ctn1 "w | grep -v tmux | awk '\''NR>1 {printf \"%-7s %-6s %-14s %-6s %-6s %-0s\n\",\$1,\$2,\$3,\$4,\$5,\$8}'\''"'
@@ -89,7 +89,7 @@ pane7=$(tmux display-message -p "#{pane_id}")
 
     tmux send-keys -t "$pane2" q
   done
-) &
+) 2>/dev/null &
 mapscii_loop_pid=$!
 pane7=$(tmux display-message -p "#{pane_id}")
 # | FOR LINE4
@@ -97,6 +97,8 @@ pane7=$(tmux display-message -p "#{pane_id}")
 tmux split-window -h -t "$pane3" 'bash ~/scripts/ksk/s-player'
 pane8=$(tmux display-message -p "#{pane_id}")
 # PANE9
+#cmd_pane9='watch -ctn5 "w | grep -v tmux | awk '\''NR>1 {printf \"%-7s %-6s %-14s %-6s %-6s %-0s\n\",\$1,\$2,\$3,\$4,\$5,\$8}'\''"'
+#tmux split-window -h -t "$pane8" "$cmd_pane9"
 tmux split-window -h -t "$pane8" 'bash ~/scripts/max/max'
 pane9=$(tmux display-message -p "#{pane_id}")
 
@@ -116,13 +118,13 @@ tmux resize-pane -t "$pane1" -x 20
 tmux resize-pane -t "$pane2" -x 20
 #tmux resize-pane -t "$pane2" -x 15
 tmux resize-pane -t "$pane2" -y 8
-tmux resize-pane -t "$pane3" -x 5
+tmux resize-pane -t "$pane3" -x 18
 # HORISONTAL PANES
 tmux resize-pane -t "$pane5" -y 4
 tmux resize-pane -t "$pane6" -y 6
 tmux resize-pane -t "$pane7" -x 20
 tmux resize-pane -t "$pane8" -y 3
-tmux resize-pane -t "$pane9" -x 20
+tmux resize-pane -t "$pane9" -x 25
 tmux resize-pane -t "$pane11" -x 20
 
 # --- SHOW/HIDE/MODIFY PANES WHEN SPOTIFY PLAYING ---
@@ -134,16 +136,15 @@ tmux resize-pane -t "$pane11" -x 20
     if [[ "$status" == "Playing" ]]; then
       if $hidden; then
         tmux resize-pane -t "$pane0" -y 6 2>/dev/null
-        tmux resize-pane -t "$pane4" -y 6 2>/dev/null
+#        tmux resize-pane -t "$pane4" -y 6 2>/dev/null
 
         tmux resize-pane -t "$pane6" -y 8 2>/dev/null
-#        tmux resize-pane -t "$pane2" -y 8 2>/dev/null
         hidden=false
       fi
     else
       if ! $hidden; then
         tmux resize-pane -t "$pane0" -y 0 2>/dev/null
-        tmux resize-pane -t "$pane4" -y 0 2>/dev/null
+#        tmux resize-pane -t "$pane4" -y 0 2>/dev/null
 
         tmux resize-pane -t "$pane6" -y 8 2>/dev/null
         hidden=true

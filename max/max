@@ -1,6 +1,9 @@
 #!/bin/bash
 source ~/scripts/.env
 
+## SMTH WRONG WITH THE catt COMMAND
+export PATH="$HOME/.local/bin:$PATH"
+
 # --- USAGE ---
 declare -A DICT=(
     ["USAGE"]="bash $0 [command]"
@@ -17,6 +20,7 @@ source <(curl -s vps.tihkel.ee/usage) DICT "$@"
 
 # --- SETTINGS ---
 LISTEN_MODE=0
+REPEAT_SAID=0
 LAST_COMMAND_TIME=0
 CURRENT_VOLUME=""
 LISTEN_VOLUME=-20%
@@ -76,6 +80,11 @@ ALARMS_SCRIPT="/home/$USER/scripts/max/alarms"
 if ! pgrep -fx "bash $ALARMS_SCRIPT" >/dev/null; then
     bash "$ALARMS_SCRIPT" >/dev/null 2>&1 &
 fi
+## KUMA PUSH CHECK
+KUMA_PUSH_CHECK_SCRIPT="/home/$USER/scripts/kuma-push-check"
+if ! pgrep -fx "bash $KUMA_PUSH_CHECK_SCRIPT" >/dev/null; then
+    bash "$KUMA_PUSH_CHECK_SCRIPT" >/dev/null 2>&1 &
+fi
 
 
 # --- MAIN COMMAND HANDLER ---
@@ -88,14 +97,16 @@ handle_command() {
     fi
 
     # --- WAKE WORDS ---
-    wake_words="(max|hi max|lex|rex)"
+    wake_words="(max|hi max|lex|rex|makes)"
     if [[ "$cmd" =~ ^$wake_words\ .+ ]]; then
+        [[ $LISTEN_MODE -eq 0 ]] && REPEAT_SAID=0
         LISTEN_MODE=1
         LAST_COMMAND_TIME=$(date +%s)
         CURRENT_VOLUME=$(pactl get-sink-volume @DEFAULT_SINK@ | awk '{print $5}' | head -n1)
         pactl set-sink-volume @DEFAULT_SINK@ $LISTEN_VOLUME
         log GREEN "Listening..."
     elif [[ "$cmd" =~ ^$wake_words$ ]]; then
+        [[ $LISTEN_MODE -eq 0 ]] && REPEAT_SAID=0
         LISTEN_MODE=1
         LAST_COMMAND_TIME=$(date +%s)
         CURRENT_VOLUME=$(pactl get-sink-volume @DEFAULT_SINK@ | awk '{print $5}' | head -n1)
@@ -145,6 +156,13 @@ handle_command() {
             LISTEN_MODE=0
             return 0
             ;;
+        *"prev"*|*"previous"*)
+            log GREEN "Playing music..."; $SPEAK "playing previous" &
+            playerctl previous
+            pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
+            LISTEN_MODE=0
+            return 0
+            ;;
         *"skip"*|*"skin"*)
             log GREEN "Skipping..."; acknowledge &
             playerctl next
@@ -163,10 +181,9 @@ handle_command() {
             LISTEN_MODE=0
             return 0
             ;;
-        *"reset"*|*"recent"*)
+        *"reset"*|*"recent")
             log GREEN "Resetting volume..."; acknowledge &
             pactl set-sink-volume @DEFAULT_SINK@ 100%
-            pactl set-sink-volume $(pactl list short sinks | awk '/hdmi/{print $2}') 100%
             playerctl volume 0.8 -p spotify
             timeout 5 catt -d "$TV_IP" volume 40
             CURRENT_VOLUME=$(pactl get-sink-volume @DEFAULT_SINK@ | awk '{print $5}' | head -n1)
@@ -200,7 +217,6 @@ handle_command() {
             node ~/scripts/tuya-control/remote.js led off
             node ~/scripts/tuya-control/remote.js pluh-1 off
             node ~/scripts/tuya-control/remote.js pluh-2 off
-            node ~/scripts/tuya-control/remote.js pluh-2 on
             pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
             LISTEN_MODE=0
             return 0
@@ -242,6 +258,9 @@ handle_command() {
             node ~/scripts/tuya-control/remote.js led on
             node ~/scripts/tuya-control/remote.js led mode color orangeled
             node ~/scripts/tuya-control/remote.js pluh-1 on
+            pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
+            LISTEN_MODE=0
+            return 0
             ;;
         *"ocean"*)
             log GREEN "Turning on ocean mode..."; acknowledge &
@@ -302,22 +321,23 @@ handle_command() {
             node ~/scripts/tuya-control/remote.js bulb-1 mode scene purplebulb
             node ~/scripts/tuya-control/remote.js bulb-2 mode scene purplebulb
             ;;
-        *"kill"*)
+        "kill"*|*" kill"*)
             log GREEN "Killing kiosk..."; $SPEAK "killing keyyawsk"
             pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
             tmux kill-server
             ;;
         *"shut down"*|*"shot down"*|*"shut though"*|*"shot though"*)
             log GREEN "Shutting down..."; $SPEAK "shutting down" &
-            timeout 5 ssh t-pirukas "sudo ddcutil setvcp 0xD6 4 2>/dev/null"
-            node ~/scripts/tuya-control/remote.js bulb-1 off
+            bash -c "$CUSTOM_SLEEP_ACTION"
+            timeout 5 ssh tihkel@t-pirukas.lan "sudo ddcutil setvcp 0xD6 4 2>/dev/null" || echo "ERROR: ssh command to t-pirukas.lan failed."
+            pactl set-sink-mute alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo true
+            (sleep 60; node ~/scripts/tuya-control/remote.js bulb-1 off) &
             node ~/scripts/tuya-control/remote.js bulb-2 off
             node ~/scripts/tuya-control/remote.js led off
             node ~/scripts/tuya-control/remote.js pluh-1 off
             node ~/scripts/tuya-control/remote.js pluh-2 off
-            node ~/scripts/tuya-control/remote.js pluh-2 on
             playerctl stop -p spotify
-            adb -s "$TV_IP" shell input keyevent KEYCODE_SLEEP
+            adb -s "$TV_IP" shell input keyevent KEYCODE_SLEEP || echo "ERROR: adb connection to $TV_IP failed."
             pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
             LISTEN_MODE=0
             return 0
@@ -326,10 +346,11 @@ handle_command() {
             log GREEN "Good morning..."
             pactl set-sink-volume @DEFAULT_SINK@ 40%
             playerctl volume 0.7 -p spotify
+            pactl set-sink-mute alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo false
             $SPEAK "good morning!"
             playerctl next -p spotify
             adb -s "$TV_IP" shell input keyevent KEYCODE_WAKEUP
-            timeout 5 ssh t-pirukas "sudo ddcutil setvcp 0xD6 1 2>/dev/null"
+            timeout 5 ssh tihkel@t-pirukas.lan "sudo ddcutil setvcp 0xD6 1 2>/dev/null"
             timeout 5 catt -d "$TV_IP" volume 40
             node ~/scripts/tuya-control/remote.js bulb-1 on
             node ~/scripts/tuya-control/remote.js bulb-1 mode color orangebulb
@@ -346,11 +367,11 @@ handle_command() {
             log GREEN "Welcome back..."
             pactl set-sink-volume @DEFAULT_SINK@ 100%
             playerctl volume 0.8 -p spotify
+            pactl set-sink-mute alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo false
             $SPEAK "welcome back!"
             playerctl next -p spotify
             adb -s "$TV_IP" shell input keyevent KEYCODE_WAKEUP
-            timeout 5 ssh t-pirukas "sudo ddcutil setvcp 0xD6 1 2>/dev/null"
-            timeout 5 catt -d "$TV_IP" volume 40
+            timeout 5 ssh tihkel@t-pirukas.lan "sudo ddcutil setvcp 0xD6 1 2>/dev/null"
             node ~/scripts/tuya-control/remote.js bulb-1 on
             node ~/scripts/tuya-control/remote.js bulb-1 mode scene purplebulb
             node ~/scripts/tuya-control/remote.js bulb-2 on
@@ -358,9 +379,10 @@ handle_command() {
             node ~/scripts/tuya-control/remote.js led on
             node ~/scripts/tuya-control/remote.js led mode scene purpleled
             node ~/scripts/tuya-control/remote.js pluh-1 on
+            timeout 5 catt -d "$TV_IP" volume 40
             CURRENT_VOLUME=$(pactl get-sink-volume @DEFAULT_SINK@ | awk '{print $5}' | head -n1)
-            pactl set-sink-volume @DEFAULT_SINK@ "$CURRENT_VOLUME"
-            tmux kill-server
+            LISTEN_MODE=0
+            return 0
             ;;
         *"project off"*|*"project of"*|*"projector off"*|*"projector of"*)
             log GREEN "Turing off projector..."; acknowledge &
@@ -379,7 +401,10 @@ handle_command() {
             ;;
         *)
             log YELLOW "$cmd - Not a command."
-#            log YELLOW "$cmd - Not a command."; confused
+            if (( REPEAT_SAID == 0 )); then
+                REPEAT_SAID=1
+                $SPEAK "repeat that" &
+            fi
             ;;
     esac
 }
@@ -406,7 +431,7 @@ while read -r line; do
         command="${line#HEARD: }"
 
         # --- WORD COUNTER ---
-        words=$(cat ~/scripts/auth/ksk.theword)
+        words="$MONKEY_WORDS"
         matches=0
         for w in $words; do
             count_for_word=$(grep -o -i "\b$w\b" <<< "$command" | wc -l)
@@ -414,7 +439,7 @@ while read -r line; do
         done
         if (( matches > 0 )); then
             ((count+=matches))
-            log GREEN "MONKEYS: $count"; $SPEAK "$MONKEY_WORD" &
+            log GREEN "MONKEYS: $count"; $SPEAK "$SAY_MONKEY" &
         fi
 
         handle_command "$command"
