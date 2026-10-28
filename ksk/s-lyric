@@ -1,0 +1,300 @@
+#!/bin/bash
+source ~/scripts/.env
+
+
+# --- SETTINGS ---
+gap_threshold_cs=800
+gap_focus_delay_cs=250
+paused_sleep_s=2
+inactive_sleep_s=5
+metadata_retry_sleep_s=1
+no_lyrics_sleep_s=5
+# --- SETTINGS ---
+
+
+to_centiseconds() {
+    local value="$1"
+    local whole frac
+
+    whole=${value%%.*}
+    frac=${value#*.}
+
+    if [[ "$value" == "$whole" ]]; then
+        frac=""
+    fi
+
+    frac=${frac//[^0-9]/}
+    frac="${frac}00"
+    frac=${frac:0:2}
+
+    printf '%d\n' "$((10#$whole * 100 + 10#$frac))"
+}
+
+
+parse_timestamp_to_centiseconds() {
+    local stamp="$1"
+    local minutes seconds fraction
+
+    minutes=${stamp%%:*}
+    seconds=${stamp#*:}
+    fraction=0
+
+    if [[ "$seconds" == *.* ]]; then
+        fraction=${seconds#*.}
+        seconds=${seconds%%.*}
+    fi
+
+    fraction=${fraction//[^0-9]/}
+    fraction="${fraction}00"
+    fraction=${fraction:0:2}
+
+    printf '%d\n' "$(((10#$minutes * 60 + 10#$seconds) * 100 + 10#$fraction))"
+}
+
+
+fetch_spotify_token() {
+    if [[ -z "$SPOTIFY_CLIENT_ID" || -z "$SPOTIFY_CLIENT_SECRET" ]]; then
+        return
+    fi
+
+    curl -s -X POST "https://accounts.spotify.com/api/token" \
+        -u "$SPOTIFY_CLIENT_ID:$SPOTIFY_CLIENT_SECRET" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -d "grant_type=client_credentials" |
+        jq -r '.access_token // empty'
+}
+
+
+normalize_track_metadata() {
+    local token="$1"
+    local track_json spotify_title spotify_artist spotify_album
+
+    [[ -z "$token" ]] && return
+
+    track_json=$(
+        curl -s -G "https://api.spotify.com/v1/search" \
+            -H "Authorization: Bearer $token" \
+            --data-urlencode "q=track:$title artist:$artist" \
+            --data-urlencode "type=track" \
+            --data-urlencode "limit=1"
+    )
+
+    spotify_title=$(jq -r '.tracks.items[0].name // empty' <<< "$track_json")
+    spotify_artist=$(jq -r '.tracks.items[0].artists[0].name // empty' <<< "$track_json")
+    spotify_album=$(jq -r '.tracks.items[0].album.name // empty' <<< "$track_json")
+
+    [[ -n "$spotify_title" ]] && title="$spotify_title"
+    [[ -n "$spotify_artist" ]] && artist="$spotify_artist"
+    [[ -n "$spotify_album" ]] && album="$spotify_album"
+}
+
+
+fetch_synced_lyrics() {
+    local lyrics_json synced_lyrics
+
+    lyrics_json=$(
+        curl -s -G "https://lrclib.net/api/get" \
+            --data-urlencode "track_name=$title" \
+            --data-urlencode "artist_name=$artist" \
+            --data-urlencode "album_name=$album"
+    )
+
+    if [[ -z "$lyrics_json" || "$lyrics_json" == "null" ]]; then
+        lyrics_json=$(
+            curl -s -G "https://lrclib.net/api/get" \
+                --data-urlencode "track_name=$title" \
+                --data-urlencode "artist_name=$artist"
+        )
+    fi
+
+    synced_lyrics=$(jq -r '.syncedLyrics // empty' <<< "$lyrics_json" 2>/dev/null)
+    printf '%s' "$synced_lyrics"
+}
+
+
+load_track() {
+    local raw_artist synced_lyrics line stamp text count=0
+
+    track_id=$(playerctl -p spotify metadata mpris:trackid 2>/dev/null)
+    title=$(playerctl -p spotify metadata xesam:title 2>/dev/null)
+    raw_artist=$(playerctl -p spotify metadata xesam:artist 2>/dev/null)
+    artist=${raw_artist%%$'\n'*}
+    album=$(playerctl -p spotify metadata xesam:album 2>/dev/null)
+
+    if [[ -z "$track_id" || -z "$title" || -z "$artist" ]]; then
+        timestamps=(0)
+        lines=("Waiting for track metadata...")
+        has_synced_lyrics=0
+        return 1
+    fi
+
+    normalize_track_metadata "$spotify_token"
+    synced_lyrics=$(fetch_synced_lyrics)
+    has_synced_lyrics=1
+
+    if [[ -z "$synced_lyrics" ]]; then
+        timestamps=(0)
+        lines=("No lyrics available")
+        has_synced_lyrics=0
+        return
+    fi
+
+    mapfile -t lyrics_lines < <(printf '%s\n' "$synced_lyrics")
+    timestamps=()
+    lines=()
+
+    for line in "${lyrics_lines[@]}"; do
+        [[ "$line" =~ ^\[([0-9]{2}:[0-9]{2}(\.[0-9]{1,3})?)\](.*)$ ]] || continue
+        stamp=${BASH_REMATCH[1]}
+        text=${BASH_REMATCH[3]#$' '}
+        text=${text%$'\r'}
+        [[ -z "$text" ]] && continue
+        timestamps+=("$(parse_timestamp_to_centiseconds "$stamp")")
+        lines+=("$text")
+        ((count++))
+    done
+
+    if [[ "$count" -eq 0 ]]; then
+        timestamps=(0)
+        lines=("No lyrics available")
+        has_synced_lyrics=0
+    fi
+}
+
+
+render_window() {
+    local current_index="$1"
+    local active_gap_before_index="$2"
+    local start end i
+    local prev_timestamp current_timestamp
+
+    if (( active_gap_before_index == current_index + 1 )); then
+        start=$current_index
+    else
+        start=$((current_index - 1))
+    fi
+    end=$((current_index + 2))
+
+    (( start < 0 )) && start=0
+    (( end >= ${#lines[@]} )) && end=$((${#lines[@]} - 1))
+
+    clear
+
+    if (( has_synced_lyrics == 0 )); then
+        printf '%b%s%b\n' "$GRAY" "${lines[0]}" "$NC"
+        return
+    fi
+
+    for ((i = start; i <= end; i++)); do
+        if (( i > start )); then
+            prev_timestamp=${timestamps[i - 1]}
+            current_timestamp=${timestamps[i]}
+            if (( current_timestamp - prev_timestamp > gap_threshold_cs )); then
+                if (( i == active_gap_before_index )); then
+                    printf '%b...%b\n' "$GREEN" "$NC"
+                else
+                    printf '%b...%b\n' "$GRAY" "$NC"
+                fi
+            fi
+        fi
+
+        if (( i < current_index || (i == current_index && active_gap_before_index == current_index + 1) )); then
+            printf '%b%s%b\n' "$GRAY" "${lines[i]}" "$NC"
+        elif (( i == current_index && active_gap_before_index != current_index + 1 )); then
+            printf '%b%s%b\n' "$GREEN" "${lines[i]}" "$NC"
+        else
+            printf '%b%s%b\n' "$NC" "${lines[i]}" "$NC"
+        fi
+    done
+}
+
+
+spotify_token=$(fetch_spotify_token)
+track_id=""
+title=""
+artist=""
+album=""
+timestamps=()
+lines=()
+has_synced_lyrics=1
+last_rendered_index=-1
+last_active_gap_before_index=-1
+last_track_id=""
+
+
+while true; do
+    status=$(playerctl -p spotify status 2>/dev/null)
+
+    if [[ "$status" != "Playing" && "$status" != "Paused" ]]; then
+        if [[ "$last_track_id" != "__inactive__" ]]; then
+            clear
+            echo "Spotify is not active."
+            last_track_id="__inactive__"
+            last_rendered_index=-1
+            last_active_gap_before_index=-1
+        fi
+        sleep "$inactive_sleep_s"
+        continue
+    fi
+
+    current_track_id=$(playerctl -p spotify metadata mpris:trackid 2>/dev/null)
+    if [[ -z "$current_track_id" ]]; then
+        if [[ "$last_track_id" != "__waiting__" ]]; then
+            clear
+            echo "Waiting for track metadata..."
+            last_track_id="__waiting__"
+            last_rendered_index=-1
+            last_active_gap_before_index=-1
+        fi
+        sleep "$metadata_retry_sleep_s"
+        continue
+    fi
+
+    if [[ "$current_track_id" != "$last_track_id" ]]; then
+        load_track
+        last_track_id="$current_track_id"
+        last_rendered_index=-1
+        last_active_gap_before_index=-1
+    fi
+
+    if [[ "$status" == "Paused" ]]; then
+        sleep "$paused_sleep_s"
+        continue
+    fi
+
+    if (( has_synced_lyrics == 0 )); then
+        if (( last_rendered_index != 0 || last_active_gap_before_index != -1 )); then
+            render_window 0 -1
+            last_rendered_index=0
+            last_active_gap_before_index=-1
+        fi
+        sleep "$no_lyrics_sleep_s"
+        continue
+    fi
+
+    position_cs=$(to_centiseconds "$(playerctl -p spotify position 2>/dev/null)")
+    current_index=0
+    active_gap_before_index=-1
+
+    for ((i = 0; i < ${#timestamps[@]}; i++)); do
+        if (( position_cs >= timestamps[i] )); then
+            current_index=$i
+        else
+            break
+        fi
+    done
+
+    if (( current_index + 1 < ${#timestamps[@]} )); then
+        if (( timestamps[current_index + 1] - timestamps[current_index] > gap_threshold_cs && position_cs >= timestamps[current_index] + gap_focus_delay_cs && position_cs < timestamps[current_index + 1] )); then
+            active_gap_before_index=$((current_index + 1))
+        fi
+    fi
+
+    if (( current_index != last_rendered_index || active_gap_before_index != last_active_gap_before_index )); then
+        render_window "$current_index" "$active_gap_before_index"
+        last_rendered_index=$current_index
+        last_active_gap_before_index=$active_gap_before_index
+    fi
+
+    sleep 0.2
+done

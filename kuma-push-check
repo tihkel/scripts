@@ -1,0 +1,20 @@
+#!/bin/bash
+source ~/scripts/.env
+
+MAX_SCRIPT="/home/$USER/scripts/max/max"
+KSK_SCRIPT="/home/$USER/scripts/ksk/ksk"
+MAX_URL="$MAX_KUMA_URL"
+KSK_URL="KSK_KUMA_URL"
+INTERVAL=30
+
+while true; do
+    if pgrep -fx "bash $MAX_SCRIPT" >/dev/null; then
+        curl -s "$MAX_URL" >/dev/null 2>&1
+    fi
+
+    if pgrep -fx "bash $KSK_SCRIPT" >/dev/null; then
+        curl -s "$KSK_URL" >/dev/null 2>&1
+    fi
+
+    sleep "$INTERVAL"
+done

@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 const { TuyaOpenApiClient } = require('@tuya/tuya-connector-nodejs');
-const { execSync } = require('child_process');
+const { config } = require('dotenv');
 
-const API_KEY = execSync(`cat ${process.env.HOME}/scripts/auth/tuya-api.key`, { encoding: 'utf8' }).trim();
-const API_SECRET = execSync(`cat ${process.env.HOME}/scripts/auth/tuya-api.secret`, { encoding: 'utf8' }).trim();
+config({ path: `${process.env.HOME}/scripts/.env`, quiet: true });
+const API_KEY = process.env.TUYA_API_KEY;
+const API_SECRET = process.env.TUYA_API_SECRET;
 const REGION = 'eu';
 
 const DEVICES = {
@@ -72,46 +73,42 @@ async function getStatus() {
   try {
     if (action === 'on') {
       await sendCommand(device.dps, true);
-      console.log(`✅ ${deviceName} turned ON!`);
+      console.log(`[${deviceName}] power: on`);
     } else if (action === 'off') {
       await sendCommand(device.dps, false);
-      console.log(`✅ ${deviceName} turned OFF!`);
+      console.log(`[${deviceName}] power: off`);
     } else if (action === 'status') {
       await getStatus();
     } else if (action === 'mode') {
-  if (!device.modeDps) {
-    console.log('⚠️ This device does not support mode changes.');
-    return;
-  }
-  if (!param || !['white','scene','color'].includes(param)) {
-    console.log('Specify mode: white, scene, or color');
-    return;
-  }
+      if (!device.modeDps) {
+        console.log('This device does not support mode changes.');
+        return;
+      }
+      if (!param || !['white', 'scene', 'color'].includes(param)) {
+        console.log('Specify mode: white, scene, or color');
+        return;
+      }
 
-  if (param.toLowerCase() === 'color') {
-    await sendCommand(device.modeDps, 'colour');
-    if (colorName && COLORS[colorName.toLowerCase()]) {
-      await sendCommand(device.colorDps, COLORS[colorName.toLowerCase()]);
-      console.log(`✅ ${deviceName} set to color mode: ${colorName}!`);
-    } else {
-      console.log(`✅ ${deviceName} set to color mode!`);
-    }
-  } else if (param.toLowerCase() === 'scene') {
-    await sendCommand(device.modeDps, 'scene');
-    if (colorName && SCENES[colorName.toLowerCase()]) {
-      await sendCommand('scene_data', SCENES[colorName.toLowerCase()]);
-      console.log(`✅ ${deviceName} set to scene: ${colorName}!`);
-    } else {
-      console.log(`✅ ${deviceName} set to scene mode!`);
-    }
-  } else {
-    await sendCommand(device.modeDps, param.toLowerCase());
-    console.log(`✅ ${deviceName} set to ${param} mode!`);
-  }
-
-
-
-
+      if (param.toLowerCase() === 'color') {
+        await sendCommand(device.modeDps, 'colour');
+        if (colorName && COLORS[colorName.toLowerCase()]) {
+          await sendCommand(device.colorDps, COLORS[colorName.toLowerCase()]);
+          console.log(`[${deviceName}] color: ${colorName}!`);
+        } else {
+          console.log(`[${deviceName}] mode: color`);
+        }
+      } else if (param.toLowerCase() === 'scene') {
+        await sendCommand(device.modeDps, 'scene');
+        if (colorName && SCENES[colorName.toLowerCase()]) {
+          await sendCommand('scene_data', SCENES[colorName.toLowerCase()]);
+          console.log(`[${deviceName}] scene: ${colorName}`);
+        } else {
+          console.log(`[${deviceName}] mode: scene`);
+        }
+      } else {
+        await sendCommand(device.modeDps, param.toLowerCase());
+        console.log(`[${deviceName}] mode: ${param}`);
+      }
     } else {
       console.log('Unknown action. Use on/off/status/mode.');
     }

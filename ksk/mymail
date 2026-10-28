@@ -1,0 +1,81 @@
+#!/bin/bash
+
+if [ -f "$HOME/scripts/.env" ]; then
+  set -a
+  . "$HOME/scripts/.env"
+  set +a
+fi
+
+# --- CONFIG ---
+export MAIL_NOTIFY_TO MAIL_NOTIFY_PASSWD
+# --- END OF CONFIG ---
+
+exec python3 - <<'PY'
+import email
+import imaplib
+import os
+import ssl
+import sys
+from email import policy
+from email.utils import parseaddr
+
+username = os.environ.get("MAIL_NOTIFY_TO")
+password = os.environ.get("MAIL_NOTIFY_PASSWD")
+if not username or not password:
+    print("Missing email credentials.", file=sys.stderr)
+    sys.exit(1)
+
+
+def single_line(value):
+    return " ".join(str(value or "").split())
+
+
+try:
+    host = os.environ.get("MAIL_IMAP_HOST")
+    if not host:
+        raise RuntimeError("MAIL_IMAP_HOST is not set.")
+
+    try:
+        port = int(os.environ.get("MAIL_IMAP_PORT", "993"))
+    except ValueError:
+        raise RuntimeError("MAIL_IMAP_PORT must be a number.") from None
+
+    with imaplib.IMAP4_SSL(
+        host, port, ssl_context=ssl.create_default_context(), timeout=30
+    ) as mailbox:
+        mailbox.login(username, password)
+        status, _ = mailbox.select("INBOX", readonly=True)
+        if status != "OK":
+            raise RuntimeError("Could not open INBOX.")
+        status, data = mailbox.uid("search", None, "UNSEEN")
+        if status != "OK":
+            raise RuntimeError("Could not search unread mail.")
+
+        print("────────── Unread Emails ──────────")
+        for uid in data[0].split():
+            # PEEK and read-only selection preserve the unread status.
+            status, parts = mailbox.uid("fetch", uid, "(BODY.PEEK[])")
+            if status != "OK":
+                raise RuntimeError("Could not fetch an unread message.")
+            raw = next(
+                (part[1] for part in parts if isinstance(part, tuple)), None
+            )
+            if raw is None:
+                continue
+            message = email.message_from_bytes(raw, policy=policy.default)
+            name, address = parseaddr(str(message.get("From", "")))
+            name = single_line(name or address)
+            address = single_line(address)
+            subject = single_line(message.get("Subject", ""))
+            body = message.get_body(preferencelist=("plain",))
+            summary = single_line(body.get_content())[:300] if body else ""
+
+            print(f"\033[1;37m{name}\033[0m <\033[90m{address}\033[0m>")
+            print(f"\033[3m{subject}\033[0m")
+            if summary:
+                print(f"\033[2;37m{summary}\033[0m")
+            print("- - - - - - - - - - - - - - - - - -")
+except (imaplib.IMAP4.error, OSError, RuntimeError) as error:
+    print(f"Could not read mail: {error}", file=sys.stderr)
+    sys.exit(1)
+PY

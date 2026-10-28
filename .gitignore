@@ -1,3 +1,4 @@
-auth/
 html/h/
 .env
+tuya-control/node_modules/
+max/__pycache__/
