@@ -13,11 +13,10 @@ RECORD_ID=$(curl -s -H "Authorization: Basic $AUTH" \
 "https://api.zone.eu/v2/dns/$IP_CHECK_MAIN_DOMAIN/a" \
 | jq -r --arg domain "$IP_CHECK_DOMAIN" '.[] | select(.name==$domain) | .id')
 CURRENT_IP=$(curl -s ipinfo.io | jq -r .ip)
-#CURRENT_IP=$(curl -s ifconfig.me)
 LAST_IP=$(dig +short $IP_CHECK_DOMAIN A | head -n1 2>/dev/null || echo '')
 
 # --- CHECK IF IP HAS CHANGED ---
-if [ "$CURRENT_IP" != "$LAST_IP" ]; then
+if [[ $CURRENT_IP != "" ]] && [ "$CURRENT_IP" != "$LAST_IP" ]; then
 
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] Updating Zone DNS for $IP_CHECK_DOMAIN to $CURRENT_IP..."
     RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}\n" -X PUT "https://api.zone.eu/v2/dns/$IP_CHECK_MAIN_DOMAIN/a/$RECORD_ID" \

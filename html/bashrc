@@ -36,14 +36,6 @@ if ! cmp -s <(echo "$BASHRC_CONF" 2>/dev/null) ~/.bashrc; then
 fi
 
 
-
-
-case $- in
-    *i*) ;;
-    *) return 0 ;;
-esac
-
-
 # --- COLORS ---
 RED='\e[31m'
 GREEN='\e[32m'
@@ -72,16 +64,10 @@ GRAY_WHOIS="\x1b[90m"
 NC_WHOIS=$'\e[0m'
 
 
-# --- EXIT IF -s ---
-if [[ " $@ " =~ " -s " ]]; then
-    return 0
-fi
-
-
 # --- SUDO COMMAND PERMS CHECK ---
 /usr/bin/sudo -n true 2>/dev/null
 SUDO_EXIT=$?
-if [[ $SUDO_EXIT -gt 1 ]]; then
+if [[ $SUDO_EXIT -gt 1 ]] || [[ $(whoami) == "kiosk" ]]; then
     sudo() {
         echo "No sudo permissions."
 #        echo "Would have run: sudo $*" | tr '\n' ' ' | cut -c1-60
@@ -91,7 +77,6 @@ elif [[ $SUDO_EXIT -eq 1 ]]; then
     sudo bash -c "echo '$USER ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/$USER"
     echo
 fi
-
 
 
 # --- APT UPDATE ---
@@ -106,21 +91,7 @@ update_check_tmpfile="update-check-$(date +%Y-%m-%d).tmp"
 updates_available_tmpfile="updates-available-$(date +%Y-%m-%d).tmp"
 ## IF UPDATE CHECK NOT DONE YET
 if [ ! -f "$update_check_tmpdir/$update_check_tmpfile" ]; then
-    if [ ! -f "$update_check_tmpdir/$updates_available_tmpfile" ]; then
-        rm -f $update_check_tmpdir/update-check-*.tmp
-        rm -f $update_check_tmpdir/updates-available-*.tmp
-        echo "Checking for updates..."
-        apt update >/dev/null 2>&1 || sudo apt update >/dev/null 2>&1
-        if apt list --upgradable 2>/dev/null | grep -i -v "listing" -q; then
-            echo "Updates available." && touch "$update_check_tmpdir/$updates_available_tmpfile"
-    #        echo "Updates available. Running update and upgrade..."
-    #        (apt upgrade -y 2>/dev/null || sudo apt upgrade -y) && touch "$update_check_tmpdir/$update_check_tmpfile"
-            echo
-        else
-            echo "No updates available today." && touch "$update_check_tmpdir/$update_check_tmpfile"
-            echo
-        fi
-    else
+    if [ -f "$update_check_tmpdir/$updates_available_tmpfile" ]; then
         echo "Updates available."
         echo
     fi
@@ -128,8 +99,8 @@ fi
 
 
 # --- APT INSTALL PACKAGES ---
-pkgs=(ssh tree curl wget jq whois)
-disp_pkgs=(xfce4-terminal xbindkeys wmctrl)
+pkgs=(ssh tree curl wget jq whois rkhunter ufw)
+disp_pkgs=(xfce4-terminal xbindkeys wmctrl xbanish)
 
 missing_pkgs=()
 missing_disp_pkgs=()
@@ -185,30 +156,6 @@ if [ -n "$DISPLAY" ] && [ ${#missing_pkgs[@]} -ne 0 ]; then
 fi
 
 
-# --- BASH COMPLETION ---
-if ! shopt -oq posix 2>/dev/null; then
-  if [ -f /usr/share/bash-completion/bash_completion ]; then
-    . /usr/share/bash-completion/bash_completion
-  elif [ -f /etc/bash_completion ]; then
-    . /etc/bash_completion
-  fi
-fi
-
-
-# --- LOCALE ---
-export LANG=C.UTF-8
-export LC_ALL=C.UTF-8
-
-
-# --- HISTORY FILE CONF ---
-shopt -s histappend
-HISTSIZE=1000
-HISTFILESIZE=2000
-shopt -s checkwinsize
-HISTCONTROL=ignoreboth
-export HISTTIMEFORMAT=$'\e[35m[%F %T]:\e[0m\n'
-
-
 # --- DIR COLORS ---
 if [ -x /usr/bin/dircolors ]; then
     eval "$(dircolors -b)"
@@ -218,15 +165,15 @@ if [ -x /usr/bin/dircolors ]; then
 fi
 
 
-
 # --- SUDO NEEDED ---
 /usr/bin/sudo -n true 2>/dev/null
 SUDO_EXIT=$?
 if [[ $SUDO_EXIT -le 1 ]]; then
 
 
-# --- FAIL2BAN ---
-FAIL2BAN_CONF="
+# FAIL2BAN
+FAIL2BAN_CONF=$(
+cat <<EOF
 [DEFAULT]
 maxretry = 5
 findtime = 600
@@ -235,7 +182,10 @@ bantime = 86400
 [sshd]
 enabled = true
 backend = systemd
+EOF
 
+if [ -x /usr/sbin/apache2 ]; then
+cat <<EOF
 [apache-req-limit]
 enabled = true
 filter = apache-req-limit
@@ -243,43 +193,67 @@ port = http,https
 logpath = /var/log/apache2/access.log
 maxretry = 10
 findtime = 5
-"
-
+EOF
+fi
+)
 if ! cmp -s <(echo "$FAIL2BAN_CONF" 2>/dev/null) /etc/fail2ban/jail.d/custom.conf; then
     echo "Updating /etc/fail2ban/jail.d/custom.conf file..."
     sudo bash -c "cat > /etc/fail2ban/jail.d/custom.conf << EOF
 $FAIL2BAN_CONF
 EOF"
-    echo "Start/Reload/Enable fail2ban.service ..."
-    sudo systemctl start fail2ban && \
-    sudo systemctl reload fail2ban && \
+    echo "Restart/Enable fail2ban.service ..."
+    sleep 1; sudo systemctl restart fail2ban && \
     sudo systemctl enable fail2ban
     echo
 fi
 
-if [ ! -f /etc/fail2ban/filter.d/apache-req-limit.conf ]; then
-    echo "Creating /etc/fail2ban/filter.d/apache-req-limit.conf..."
-    sudo bash -c "cat > /etc/fail2ban/filter.d/apache-req-limit.conf << 'EOF'
+APACHE_REQ_LIMIT_CONF=$(cat <<'EOF'
 [Definition]
 failregex = ^<HOST> - - \[.*\] ".*"
 ignoreregex =
+EOF
+)
+if ! cmp -s <(echo "$APACHE_REQ_LIMIT_CONF" 2>/dev/null) /etc/fail2ban/filter.d/apache-req-limit.conf; then
+    echo "Updating /etc/fail2ban/filter.d/apache-req-limit.conf file..."
+    sudo bash -c "cat > /etc/fail2ban/filter.d/apache-req-limit.conf << EOF
+$APACHE_REQ_LIMIT_CONF
 EOF"
+    echo "Restart/Enable fail2ban.service ..."
+    sleep 1; sudo systemctl restart fail2ban && \
+    sudo systemctl enable fail2ban
+    echo
 fi
 
 
-# --- MODT ---
-# FIRMWARE UPDATES
+# SSH_CONFIG
+SSH_CONFIG_CONF=$(cat <<EOF
+PermitRootLogin no
+EOF
+)
+if ! [[ $(hostname) =~ (pm|pve|k8s) ]] && ! cmp -s <(echo "$SSH_CONFIG_CONF" 2>/dev/null) /etc/ssh/sshd_config.d/custom.conf; then
+    echo "Updating /etc/ssh/sshd_config.d/custom.conf file..."
+    sudo bash -c "cat > /etc/ssh/sshd_config.d/custom.conf << EOF
+$SSH_CONFIG_CONF
+EOF"
+    echo "Restart ssh.service ..."
+    sudo sshd -t && sudo systemctl reload ssh
+    echo
+fi
+
+
+# MODT
+## FIRMWARE UPDATES
 if [ -f /run/motd.d/85-fwupd ]; then
         cat /run/motd.d/85-fwupd
 fi
-# LOGIN MSG
+## LOGIN MSG
 loginMsg=""
 if ! cmp -s <(echo "$loginMsg" 2>/dev/null) /etc/motd; then
     echo "Updating /etc/motd file..."
     sudo bash -c "echo '$loginMsg' > /etc/motd"
     echo
 fi
-# REMOVE DEFAULT LOGIN MSG
+## REMOVE DEFAULT LOGIN MSG
 if [ -d /etc/update-motd.d ] && [ "$(ls -A /etc/update-motd.d/)" ]; then
     echo "Removing /etc/update-motd.d/* files..."
     sudo rm -f /etc/update-motd.d/*
@@ -287,30 +261,13 @@ if [ -d /etc/update-motd.d ] && [ "$(ls -A /etc/update-motd.d/)" ]; then
 fi
 
 
-# --- HOSTS FILE SETUP ---
+# HOSTS FILE SETUP
 hosts="
-127.0.0.1   localhost
-$([[ $(hostname) == "t-pm" ]] && echo "192.168.1.2" || echo "127.0.0.1")    $(hostname).lan $(hostname)
-::1         localhost ip6-localhost ip6-loopback
-ff02::1     ip6-allnodes
-ff02::2     ip6-allrouters
-
-# MY HOSTS
-192.168.1.2 t-pm
-192.168.1.3 t-lap
-192.168.1.4 t-teler
-192.168.1.5 t-k-debian
-192.168.1.7 t-pirukas
-192.168.1.200 t-v-debian
-
-# VPN
-10.182.94.1 t-pirukas.vpn
-10.182.94.4 t-pm.vpn
-10.182.94.5 t-lap.vpn
-10.182.94.6 t-k-debian.vpn
-10.182.94.7 t-22.vpn
-10.182.94.8 t-v-debian.vpn
-
+127.0.0.1	localhost
+$([[ $(hostname) =~ (pve|pm) ]] && echo "$(hostname -I | awk '{print $1}')" || echo "127.0.0.1")	$(hostname).lan $(hostname)
+::1		localhost ip6-localhost ip6-loopback
+ff02::1		ip6-allnodes
+ff02::2		ip6-allrouters
 
 # ZONE CUSTOM
 #217.146.69.x
@@ -324,15 +281,10 @@ echo
 fi
 
 
-# --- END OF SUDO NEEDED ---
-fi
-
-
-
 # --- REMOVE PACKAGES ---
 ## EXIM - mail
 if command -v exim4 >/dev/null 2>&1; then
-    echo "Exim4 detected. Removing..."
+    echo "[*] Exim4 detected. Removing..."
     sudo systemctl stop exim4
     sudo systemctl disable exim4
     sudo apt purge -y 'exim4*'
@@ -342,13 +294,28 @@ if command -v exim4 >/dev/null 2>&1; then
 fi
 
 
-
 # --- CRONTAB ---
-the_CJ="0 4 * * * curl -s vps.tihkel.ee/home_dir_backup | USER=\"$USER\" bash > /tmp/${USER}_home_dir_backup.log 2>&1"
-#the_CJ="0 4 * * * BACKUP_DIR=/home/$USER/backups; MAX_BACKUPS=1; DATE=\$(date +\%F_\%H-\%M-\%S); mkdir -p \"\$BACKUP_DIR\"; tar --exclude=\"$USER/backups\" --exclude=\"$USER/vms\" --exclude=\"$USER/t-nas\" -czf \"\$BACKUP_DIR/\${DATE}_home_dir_backup_for_$USER@\$(hostname).tar.gz\" -C /home $USER >/dev/null; ls -1t \"\$BACKUP_DIR\" | tail -n +\$((MAX_BACKUPS+1)) | xargs -r -I {} rm -- \"\$BACKUP_DIR/{}\""
+## SOMEHOW IT GIVES A DEDICATED SECOND OF WHEN TO DO THE BACKUP BY HASHING THE HOSTNAME
+_backup_slot() {                            # FNV-1a/32 -> 0..11
+    local s h=2166136261 b i
+    local LC_ALL=C
+    s=$(hostname -s 2>/dev/null || hostname)
+    for ((i = 0; i < ${#s}; i++)); do
+        b=$(printf '%d' "'${s:i:1}")
+        h=$(( (h ^ b) * 16777619 % 4294967296 ))
+    done
+    echo $(( (h / 4096) % 12 ))
+}
+_bk_min=$(( $(_backup_slot) * 5 ))
 
+## HOME DIR BACKUP
+the_CJ="${_bk_min} 4 * * * curl -s vps.tihkel.ee/home_dir_backup | USER=\"$USER\" bash > /tmp/${USER}_home_dir_backup.log 2>&1"
+## UPDATE
+the_CJ+=$'\n0 5 * * * update_check_tmpdir="/tmp"; touch "$update_check_tmpdir/.write-test" 2>/dev/null || update_check_tmpdir="../usr/tmp"; rm -f $update_check_tmpdir/.write-test 2>/dev/null; update_check_tmpfile="update-check-$(date +%Y-%m-%d).tmp"; updates_available_tmpfile="updates-available-$(date +%Y-%m-%d).tmp"; rm -f $update_check_tmpdir/update-check-*.tmp; rm -f $update_check_tmpdir/updates-available-*.tmp; apt update >/dev/null 2>&1 || sudo apt update >/dev/null 2>&1; if apt list --upgradable 2>/dev/null | grep -i -v "listing" -q; then touch "$update_check_tmpdir/$updates_available_tmpfile"; else touch "$update_check_tmpdir/$update_check_tmpfile"; fi'
+## IP CHECK
 if [ "$(hostname)" = "t-pirukas" ]; then
     the_CJ+=$'\n*/5 * * * * curl -s vps.tihkel.ee/external_ip_check | bash > /tmp/external_ip_check.log'
+    the_CJ+=$'\n*/1 * * * * curl -s vps.tihkel.ee/t-devices-check | bash > /tmp/t_devices_check.log'
 fi
 # CHECK IF CRON EXISTS
 if command -v crontab >/dev/null 2>&1; then
@@ -358,6 +325,18 @@ if command -v crontab >/dev/null 2>&1; then
         echo
     fi
 fi
+
+# CHECK IF PREVIOUS CRON FAILED
+if [ -f "/tmp/${USER}_home_dir_backup.err" ]; then
+    echo "Previous crontab failed. Check '/tmp/${USER}_home_dir_backup.log'."
+    echo
+fi
+
+
+
+# --- END OF SUDO NEEDED ---
+fi
+
 
 
 # --- NANORC ---
@@ -526,14 +505,6 @@ ${BOLD_PS1}${MAGENTA_PS1}"'\h'"\
 ${NC_PS1}"':'"\
 ${ORANGE_PS1}"'\w'"\
 ${NC_PS1}"'\$ '
-elif [[ $(hostname) == "t-pm" || $(hostname) == "t-v-debian" ]]; then
-    export PS1='\[\e]2;\u@\h: \w\a\]'"\
-${BOLD_PS1}${MAGENTA_PS1}"'\u'"\
-${NC_PS1}${GREEN_PS1}"'@'"\
-${BOLD_PS1}${MAGENTA_PS1}"'\h'"\
-${NC_PS1}"':'"\
-${GREEN_PS1}"'\w'"\
-${NC_PS1}"'\$ '
 elif [[ $(hostname) == "t-pirukas" ]]; then
     export PS1='\[\e]2;\u@\h: \w\a\]'"\
 ${BOLD_PS1}${MAGENTA_PS1}"'\u'"\
@@ -619,10 +590,64 @@ EOF
 fi
 
 
-# --- DEAL WITH KALI (zshrc) ---
-if ! cmp -s <(echo "exec /bin/bash" 2>/dev/null) ~/.zshrc; then
-    echo "Updating ~/.zshrc to run bash..."
-    echo "exec /bin/bash" > ~/.zshrc
+# --- .PROFILE ---
+DOT_PROFILE_CONF=$(cat <<'EOF'
+#! --- PROFILE --- !#
+
+# LOCALE/LANGUAGE
+unset LANGUAGE
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
+
+# SET PATH
+if [ -d "$HOME/bin" ] ; then
+    PATH="$HOME/bin:$PATH"
+fi
+if [ -d "$HOME/.local/bin" ] ; then
+    PATH="$HOME/.local/bin:$PATH"
+fi
+if [ -d "$HOME/.go/bin" ] ; then
+    PATH="$HOME/.go/bin:$PATH"
+fi
+if [ -d "/usr/sbin" ] ; then
+    PATH="/usr/sbin:$PATH"
+fi
+
+# RUN BASHRC WHEN RUNNING BASH
+if [ -n "$BASH_VERSION" ]; then
+    if [ -f "$HOME/.bashrc" ]; then
+	. "$HOME/.bashrc"
+    fi
+fi
+
+# BASH COMPLETION
+if ! shopt -oq posix 2>/dev/null; then
+  if [ -f /usr/share/bash-completion/bash_completion ]; then
+    . /usr/share/bash-completion/bash_completion
+  elif [ -f /etc/bash_completion ]; then
+    . /etc/bash_completion
+  fi
+fi
+
+# --- HISTORY FILE CONF ---
+shopt -s histappend
+HISTSIZE=1000
+HISTFILESIZE=2000
+shopt -s checkwinsize
+HISTCONTROL=ignoreboth
+export HISTTIMEFORMAT=$'\e[35m[%F %T]:\e[0m\n'
+
+# RUN XBANISH IF DISPLAY
+if [ -n "$DISPLAY" ]; then
+    xbanish &
+fi
+EOF
+)
+if ! cmp -s <(echo "$DOT_PROFILE_CONF" 2>/dev/null) ~/.profile; then
+    echo "Updating ~/.profile conf..."
+    cat > ~/.profile <<EOF
+$DOT_PROFILE_CONF
+EOF
     echo
 fi
 
@@ -672,116 +697,29 @@ if command -v "gsettings" >/dev/null 2>&1; then
 fi
 
 
-# --- FOR NVIM ---
-PROMPT_COMMAND="echo -ne '\e[6 q'"
-
-
-
 # --- ALIASES ---
 # SSH
-alias sshs="ssh tihkel@t-pm"
-alias sshk="ssh tihkel@t-k-debian.vpn"
+alias sshk="ssh kiosk@t-op2-pve.lan"
 alias sshp="ssh tihkel@t-pirukas.vpn"
-alias sshv="ssh tihkel@t-v-debian.vpn"
+alias sshvm="ssh tihkel@t-vm-media.vpn"
 alias sshu="ssh debian@vps.tihkel.ee"
 alias ssht="ssh virt135310@tihkel.ee"
 alias sshm="ssh tihkel@t-lap.vpn"
-alias sshlocal="ssh -p 2222 tihkel@localhost"
+alias sshf="ssh fullq@t-v-fullq.lan"
+alias sshop1="ssh root@t-op1-pve.lan"
+alias sshop2="ssh root@t-op2-pve.lan"
 alias killsshlocal="kill $(ps aux | grep ssh | grep localhost | awk '{print $2}')"
-
 sshl() {
-    alias | grep "ssh.=" | awk '{$1=""; print substr($0,2)}'
+    alias | grep "^alias ssh" | awk '{$1=""; print substr($0,2)}'
 }
-
-
-# SOUND TUNNEL
-tun() {
-    if ! command -v pactl >/dev/null 2>&1; then
-        echo "Error: 'pactl' command not found."
-        return 1
-    fi
-
-    local MAKE_T="native-protocol-tcp"
-    local ADD_T="tunnel-sink"
-    local LOCAL_T="loopback"
-
-    case "$1" in
-        list)
-            for name in MAKE_T ADD_T LOCAL_T; do
-                pat="${!name}"
-                ids=$(pactl list short modules | awk "/$pat/ {print \$1}")
-                if [ -n "$ids" ]; then
-                    echo "$name:"
-                    echo "$ids" | awk '{print "  " $1}'
-                fi
-            done
-            ;;
-        make)
-            pactl load-module module-native-protocol-tcp auth-anonymous=1
-            ;;
-        rem)
-            ids=$(pactl list short modules | awk "/$MAKE_T/ {print \$1}")
-            if [ -z "$ids" ]; then
-                echo "No receiver tunnels exist."
-            else
-                for id in $ids; do
-                    echo "Removing receiver id: $id"
-                    pactl unload-module "$id"
-                done
-            fi
-            ;;
-        add)
-            if [ "$2" = "local" ]; then
-                ids=$(pactl list short modules | awk "/$ADD_T/ {print \$1}")
-                if [ -z "$ids" ]; then
-                    echo "Error: Load transmitter first."
-                else
-                    pactl load-module module-loopback source=remote.monitor sink=alsa_output.pci-0000_00_1f.3.analog-stereo latency_msec=255 tsched=0
-                fi
-            else
-                pactl load-module module-tunnel-sink server=t-k-debian.vpn sink_name=remote latency_msec=200 rate=48000 channels=2
-                #pactl load-module module-tunnel-sink server=t-k-debian.vpn sink_name=remote latency_msec=130 tsched=0
-                pactl set-default-sink remote 2>/dev/null
-            fi
-            ;;
-        del)
-            if [ "$2" = "local" ]; then
-                ids=$(pactl list short modules | awk "/$LOCAL_T/ {print \$1}")
-                if [ -z "$ids" ]; then
-                    echo "No local tunnels exist."
-                else
-                    for id in $ids; do
-                        echo "Deleting local id: $id"
-                        pactl unload-module "$id"
-                    done
-                fi
-            else
-                ids=$(pactl list short modules | awk "/$ADD_T/ {print \$1}")
-                if [ -z "$ids" ]; then
-                    echo "No transmitter tunnels exist."
-                else
-                    for id in $ids; do
-                        echo "Deleting transmitter id: $id"
-                        pactl unload-module "$id"
-                    done
-                fi
-            fi
-            ;;
-        *)
-            echo "Error: Missing argument."
-            ;;
-    esac
-}
-
 
 # PLAYERCTL
-alias play="sshk playerctl play -p spotify && kill -9 $$"
-alias stop="sshk playerctl stop -p spotify && kill -9 $$"
+alias play="sshk playerctl play -p spotify && exit"
+alias stop="sshk playerctl stop -p spotify && exit"
 alias skip="sshk playerctl next -p spotify"
 
 # TERMCALL
 termcall() (
-
     ## SETTINGS
     local RECEIVER_USER="tihkel"
     local RECEIVER_HOST="$1"
@@ -831,16 +769,17 @@ termcall() (
     set -m
 )
 
-
 # SHORTCUTS
 ## CURL|BASH
 alias ns="bash <(curl -s vps.tihkel.ee/ns)"
 alias space="bash <(curl -s vps.tihkel.ee/space)"
 alias disk="bash <(curl -s vps.tihkel.ee/disk)"
-alias inodes="bash <(curl -s vps.tihkel.ee/inodes)"
+alias inodes="bash <(curl -s vps.tihkel.ee/du) --inodes"
 alias gboot="bash <(curl -s vps.tihkel.ee/gboot)"
 alias logs="bash <(curl -s vps.tihkel.ee/logs)"
+alias tun="bash <(curl -s vps.tihkel.ee/tun)"
 alias tmux-update="bash <(curl -s vps.tihkel.ee/tmux-update)"
+alias tmux-cmd="bash <(curl -s vps.tihkel.ee/tmux-cmd)"
 
 ## LOCAL SCRIPTS
 alias ksk="bash ~/scripts/ksk/ksk"
@@ -853,14 +792,15 @@ alias splay="bash ~/scripts/max/s-query"
 alias tuya="node ~/scripts/tuya-control/remote.js"
 alias oc="~/.opencode/bin/opencode"
 max() {
-    ssh tihkel@t-k-debian.vpn "bash ~/scripts/max/max '$*'"
+    ssh kiosk@t-op2-pve.lan "bash ~/scripts/max/max '$*'"
 }
-alias setalarm="setsid ssh tihkel@t-k-debian bash ~/scripts/max/alarms"
+alias setalarm="setsid ssh kiosk@t-op2-pve.lan bash ~/scripts/max/alarms"
 
 # CUSTOM SYSTEM COMMANDS
 alias ..="cd .."
 alias la="ls -lah"
 alias ip="ip -c"
+alias diff="diff --color=auto"
 alias search="sudo find / 2>/dev/null | grep"
 alias update="sudo apt update && sudo apt upgrade && rm -f /tmp/updates-available-*.tmp && touch /tmp/update-check-$(date +%Y-%m-%d).tmp"
 lst() {
@@ -961,7 +901,6 @@ whois_func() {
 }
 alias whois='whois_func'
 
-
 # OTHER
 t-vpn() {
     case "$1" in
@@ -975,6 +914,7 @@ disp() {
     local PRIMARY=$(xrandr --query | grep " connected" | grep "primary" | awk '{print $1}')
     local DELL=$(xrandr --query | grep " connected" | grep "6-6" | awk '{print $1}')
     local PROJECTOR=$(xrandr --query | grep " connected" | grep "5-5" | awk '{print $1}')
+    [[ -n $PRIMARY && -n $DELL ]] || { echo "\$PRIMARY or \$DELL display not found."; return 1; }
     if [[ "$CMD" == "on" ]]; then
         xrandr \
             --output "$PRIMARY" --auto --mode 1920x1080 \
@@ -988,6 +928,9 @@ disp() {
             --output "$PRIMARY" --auto --mode 1920x1080 \
             --output "$DELL" --auto --mode 1920x1080 --same-as "$PRIMARY" \
             --output "$PROJECTOR" --auto --mode 1920x1080 --same-as "$PRIMARY"
+    else
+        echo "ERROR: '$CMD' command not recognized."
+        return 1
     fi
     kill -9 $$
 }
@@ -1010,16 +953,12 @@ alias dol="dolphin"
 alias rnd="openssl rand -base64 12"
 alias maps="node ~/mapscii/main.js"
 alias gitd="git fetch; git status --short"
-
+alias vol="pulsemixer"
 
 
 # --- NEW SRC ---
 # SETTINGS
 term_width=$(tput cols)
-#msg=$(cat << EOF
-# Hello $(whoami)! 
-#EOF
-#)
 
 # PROCESS EACH LINE
 while IFS= read -r line; do
@@ -1039,7 +978,6 @@ while IFS= read -r line; do
     # ECHO
     echo -e "${BOLD}${left}${line}${right}${NC}"
 done <<< " Hello $(whoami)! "
-#done <<< "$msg"
 
 ### HOSTNAME
 c_hostname=$(hostname)
@@ -1049,20 +987,18 @@ elif [[ "$c_hostname" == "t-lap" || "$c_hostname" == "t-u-lap" ]]; then
     colored_hostname="${PURPLE}$c_hostname${NC}"
 elif [[ "$c_hostname" == "t-k-debian" ]]; then
     colored_hostname="${CYAN}$c_hostname${NC}"
-elif [[ "$c_hostname" == "t-v-debian" || "$c_hostname" == "t-pm" ]]; then
-    colored_hostname="${GREEN}$c_hostname${NC}"
 elif [[ "$c_hostname" == "t-pirukas" ]]; then
     colored_hostname="${YELLOW}$c_hostname${NC}"
 else
     colored_hostname="${RED}${c_hostname}${NC}"
 fi
-echo -e "  ${BOLD}Hostname:${NC} ${PURPLE}$colored_hostname${NC}"
+echo -e "  ${BOLD}Host:${NC} ${PURPLE}$colored_hostname${NC}"
 
 ### LOCAL IPv4
-echo -e "  ${BOLD}Local IPv4:${NC} ${PURPLE}$(local_ipv4=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '192\.168\.|217\.' | uniq | xargs); [ -z "$local_ipv4" ] && echo -e ${RED}[ERROR] No IP found.${NC} || echo "$local_ipv4")${NC}"
+echo -e "  ${BOLD}Local:${NC} ${PURPLE}$(local_ipv4=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '192\.168\.|217\.' | uniq | xargs); [ -z "$local_ipv4" ] && echo -e ${RED}[ERROR] No IP found.${NC} || echo "$local_ipv4")${NC}"
 
 ### PUBLIC IPv4
-echo -e "  ${BOLD}Public IPv4:${NC} ${PURPLE}$(IP=$(timeout 0.2 dig +short txt ch whoami.cloudflare @1.1.1.1 2>/dev/null | tr -d '"'); if [ -n "$IP" ]; then echo "$IP"; else curl -s https://icanhazip.com; fi)${NC}"
+echo -e "  ${BOLD}ISP:${NC} ${PURPLE}$(IP=$(timeout 0.2 dig +short txt ch whoami.cloudflare @1.1.1.1 2>/dev/null | tr -d '"'); if [ -n "$IP" ]; then echo "$IP"; else curl -s https://icanhazip.com; fi)${NC}"
 
 ### VPN
 if ls /etc/ 2>/dev/null | grep -i -E "wireguard" >/dev/null ; then

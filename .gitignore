@@ -2,3 +2,4 @@ html/h/
 .env
 tuya-control/node_modules/
 max/__pycache__/
+html/index.php

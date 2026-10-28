@@ -1,5 +1,0 @@
-#!/bin/bash
-clear
-find / -type f -readable 2>/dev/null
-echo
-find "$HOME" -type f -readable 2>/dev/null
